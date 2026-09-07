@@ -9,7 +9,7 @@
 ## Lifecycle
 
 1. Settings export action calls `useConfigExport.exportConfig`.
-2. The hook snapshots local configuration keys and writes one file at `zterm-config-export/zterm-config.json`.
+2. The hook snapshots local configuration keys and writes one file at `zterm-config-export/zterm-config.json` in Capacitor `Directory.Data` (app-scoped). Export `writeFile` and import `readFile` pass `Encoding.UTF8`; omitting encoding treats `data` as base64 and produces a non-JSON on-disk file. Export and import use the same directory. Public `Directory.ExternalStorage` is not the config-transfer write target.
 3. Export returns an explicit `{ ok: true, path, uri? }` or `{ ok: false, error }`.
 4. App must surface that result to the user with a visible success or failure message.
 5. Import reads the same canonical file path, validates schema, applies storage, and returns an explicit result before App reloads.
@@ -19,7 +19,7 @@
 
 ## White-Box Plan
 
-- `src/hooks/useConfigExport.test.tsx` proves export returns a visible path/uri result, import failures return explicit errors, and session/runtime storage keys are excluded from config export.
+- `src/hooks/useConfigExport.test.tsx` proves export returns a visible path/uri result, mkdir/writeFile/readFile use `Directory.Data` rather than public `Directory.ExternalStorage`, writeFile/readFile pass `Encoding.UTF8`, UTF8 on-disk bytes are valid JSON and import restores storage, an already-existing DATA directory still writes, mkdir failure returns `{ ok: false, error }`, import failures return explicit errors, and session/runtime storage keys are excluded from config export.
 - `src/components/settings/AppUpdateSection.test.tsx` proves Settings exposes the config transfer actions and route buttons mark daemon shortcuts as `server-connected` and Relay public route shortcuts as `relay-injected`, rather than converting them into explicit `user-saved` custom URLs.
 - `src/pages/SettingsPage.theme.test.tsx` proves a configured Relay account produces a Relay public update candidate alongside direct daemon candidates, so update checking is not pinned to a Tailscale/private daemon address.
 - `src/lib/app-update.test.ts`, `src/lib/app-update-relay-manifest.test.ts`, and `src/lib/app-update-runtime.test.ts` prove private legacy daemon URLs are replaceable by Relay, Relay URLs preserve the `/relay/updates/latest.json` route, and explicit `user-saved` URLs are not overwritten.
@@ -34,4 +34,4 @@
 
 ## Known Gaps
 
-- Android scoped-storage permission behavior still requires packaged-device smoke before claiming real-device config file visibility.
+- Packaged-device smoke must still prove Settings export/import against app-scoped `Directory.Data` (visible URI + UTF8 JSON file bytes + import roundtrip). Public `Directory.ExternalStorage` mkdir is not a config-transfer success path.

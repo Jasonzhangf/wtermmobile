@@ -771,6 +771,51 @@ describe('RemoteWindowOverlay', () => {
     });
   });
 
+  it('does not invoke commitDecodedFrame as a React setState updater after stream start', async () => {
+    const mediaStream = { id: 'media-stream-commit' } as MediaStream;
+    const commitDecodedFrame = vi.fn((commit: { frameId: number }) => {
+      if (commit == null) {
+        throw new TypeError("Cannot read properties of null (reading 'frameId')");
+      }
+      return Number.isFinite(commit.frameId);
+    });
+    const requestTargets = vi.fn(async () => ({
+      requestId: 'rw-commit-updater',
+      targets: [makeTarget('app-commit-updater', 'TextEdit', 'app-window')],
+    }));
+    const startStream = vi.fn(async (_sessionId: string, _target: RemoteWindowStreamTargetManifest, streamId: string) => ({
+      streamId,
+      mediaStream,
+      commitDecodedFrame,
+      bindings: [{
+        lane: 'focus' as const,
+        mediaStream,
+        streamId,
+        mediaPlanVersion: 2,
+        mediaEpoch: 0,
+        trackId: 'track-focus',
+      }],
+    }));
+
+    render(
+      <RemoteWindowOverlay
+        activeSessionId="session-1"
+        requestTargets={requestTargets}
+        startStream={startStream}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '打开远程窗口' }));
+    fireEvent.click(await screen.findByTestId('remote-window-target-app-commit-updater'));
+
+    await waitFor(() => {
+      const video = screen.getByTestId('remote-window-video') as HTMLVideoElement;
+      expect(video.srcObject).toBe(mediaStream);
+    });
+    expect(screen.queryByText('页面加载失败')).toBeNull();
+    expect(commitDecodedFrame).not.toHaveBeenCalledWith(null);
+    expect(commitDecodedFrame.mock.calls.every((call) => call[0] != null)).toBe(true);
+  });
+
   it('stops the stream and reports unsupported decoded-frame projection', async () => {
     Reflect.deleteProperty(HTMLVideoElement.prototype, 'requestVideoFrameCallback');
     Reflect.deleteProperty(HTMLVideoElement.prototype, 'cancelVideoFrameCallback');
@@ -1806,6 +1851,68 @@ describe('RemoteWindowOverlay', () => {
     expect(overlay.getAttribute('data-mode')).toBe('floating');
     expect(setPointerCapture).toHaveBeenCalledWith(1);
     expect(releasePointerCapture).toHaveBeenCalledWith(1);
+  });
+
+  it('clamps floating overlay drag to visualViewport offsetLeft and the parent container', async () => {
+    const requestTargets = vi.fn(async () => ({
+      requestId: 'rw-bounds',
+      targets: [makeTarget('pane-1', 'zterm pane', 'iterm2-pane')],
+    }));
+
+    render(<RemoteWindowOverlay activeSessionId="session-bounds" requestTargets={requestTargets} />);
+
+    fireEvent.click(screen.getByRole('button', { name: '打开远程窗口' }));
+    await expandItermPaneGroup();
+    fireEvent.click(screen.getByTestId('remote-window-target-pane-1'));
+
+    const overlay = screen.getByTestId('remote-window-locked-overlay');
+    const toolbar = screen.getByTestId('remote-window-drag-handle');
+    Object.defineProperty(overlay, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        x: 600,
+        y: 420,
+        left: 600,
+        top: 420,
+        right: 960,
+        bottom: 645,
+        width: 360,
+        height: 225,
+        toJSON: () => ({}),
+      }),
+    });
+    Object.defineProperty(overlay.parentElement as HTMLElement, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        x: 0,
+        y: 0,
+        left: 0,
+        top: 0,
+        right: 500,
+        bottom: 800,
+        width: 500,
+        height: 800,
+        toJSON: () => ({}),
+      }),
+    });
+    Object.defineProperty(window, 'visualViewport', {
+      configurable: true,
+      value: {
+        offsetLeft: 0,
+        offsetTop: 0,
+        width: 1024,
+        height: 768,
+        addEventListener() {},
+        removeEventListener() {},
+      },
+    });
+
+    fireEvent.pointerDown(toolbar, { pointerId: 41, clientX: 700, clientY: 440 });
+    fireEvent.pointerMove(toolbar, { pointerId: 41, clientX: 620, clientY: 380 });
+    fireEvent.pointerUp(toolbar, { pointerId: 41, clientX: 620, clientY: 380 });
+
+    expect(overlay.style.transform).toBe('translate(-468px, -60px)');
+    expect(overlay.getAttribute('data-mode')).toBe('floating');
   });
 
   it('keeps primary controls structurally valid with 48px touch targets and no child close action', async () => {
