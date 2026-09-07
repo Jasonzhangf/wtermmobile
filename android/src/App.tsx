@@ -1056,6 +1056,7 @@ export function AppContent({
             terminalFontSize={bridgeSettings.terminalFontSize}
             terminalWidthMode={bridgeSettings.terminalWidthMode}
             terminalSessionGroupLayoutMode={bridgeSettings.terminalSessionGroupLayoutMode}
+            sessionDrawerFilterConfig={bridgeSettings.sessionDrawerFilter}
             resolveFileBrowserSessionPort={resolveFileBrowserSessionPort}
             onRemoteWindowMessage={onRemoteWindowMessage}
             shortcutSmartSort={bridgeSettings.shortcutSmartSort}

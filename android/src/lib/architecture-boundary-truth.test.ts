@@ -111,6 +111,15 @@ describe('architecture boundary truth gate', () => {
     expect(debugOverlaySource).toMatch(/\bconst\s+TerminalDebugOverlay\s*=/);
   });
 
+  it('keeps TerminalPage session-drawer visibility on the supplied BridgeSettings config instead of localStorage', () => {
+    const terminalPageSource = stripComments(read('src/pages/TerminalPage.tsx'));
+
+    expect(terminalPageSource).toContain('sessionDrawerFilterConfig');
+    expect(terminalPageSource).not.toContain('SESSION_DRAWER_FILTER_STORAGE_KEY');
+    expect(terminalPageSource).not.toContain('localStorage.getItem');
+    expect(terminalPageSource).not.toContain('localStorage');
+  });
+
   it('keeps TerminalSessionDrawer from inventing host identity fallbacks', () => {
     const source = read('src/components/terminal/TerminalSessionDrawerContent.tsx');
 

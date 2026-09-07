@@ -25,6 +25,13 @@ export type TerminalSessionGroupLayoutMode = 'auto' | 'horizontal' | 'vertical';
 export type TerminalShellSkin = 'auto' | 'light' | 'blue' | 'black';
 export type TerminalFontSize = 'minimum' | 'small' | 'medium' | 'large';
 
+export interface SessionDrawerFilterSettings {
+  version: 1;
+  mode: 'all' | 'only-master' | 'hide-subagent';
+  masterNames: string[];
+  subagentNames: string[];
+}
+
 export const TERMINAL_FONT_SIZE_OPTIONS = [
   { id: 'minimum', label: '最小', pixels: 10 },
   { id: 'small', label: '小', pixels: 12 },
@@ -103,6 +110,7 @@ export interface BridgeSettings {
   defaultServerId?: string;
   traversalRelay?: TraversalRelayClientSettings;
   traversalPathPriority?: ('rtc-direct' | 'tailscale' | 'ipv6' | 'ipv4' | 'rtc-relay')[];
+  sessionDrawerFilter?: SessionDrawerFilterSettings;
 }
 
 const MIN_TERMINAL_CACHE_LINES = 200;
@@ -499,6 +507,42 @@ export function getDefaultBridgeServer(settings: BridgeSettings) {
   return settings.servers.find((server) => server.id === settings.defaultServerId);
 }
 
+function normalizeNameList(names: unknown): string[] {
+  if (!Array.isArray(names)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const raw of names) {
+    if (typeof raw !== 'string') {
+      continue;
+    }
+    const name = raw.trim();
+    if (!name || seen.has(name)) {
+      continue;
+    }
+    seen.add(name);
+    normalized.push(name);
+  }
+  return normalized;
+}
+
+function normalizeSessionDrawerFilterSettings(value: unknown): SessionDrawerFilterSettings | undefined {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+  const candidate = value as Partial<SessionDrawerFilterSettings>;
+  const mode = candidate.mode === 'only-master' || candidate.mode === 'hide-subagent' || candidate.mode === 'all'
+    ? candidate.mode
+    : 'all';
+  return {
+    version: 1,
+    mode,
+    masterNames: normalizeNameList(candidate.masterNames),
+    subagentNames: normalizeNameList(candidate.subagentNames),
+  };
+}
+
 export function normalizeBridgeSettings(input: unknown): BridgeSettings {
   if (!input || typeof input !== 'object') {
     return DEFAULT_BRIDGE_SETTINGS;
@@ -656,6 +700,10 @@ export function normalizeBridgeSettings(input: unknown): BridgeSettings {
         })()
       : undefined;
 
+  const sessionDrawerFilter = normalizeSessionDrawerFilterSettings(
+    (candidate as { sessionDrawerFilter?: unknown }).sessionDrawerFilter,
+  );
+
   return {
     targetHost,
     targetPort,
@@ -678,5 +726,6 @@ export function normalizeBridgeSettings(input: unknown): BridgeSettings {
       || mergedServers.find((server) => server.targetHost === targetHost && server.targetPort === targetPort)?.id,
     traversalRelay: normalizeTraversalRelayClientSettings((candidate as { traversalRelay?: unknown }).traversalRelay),
     traversalPathPriority,
+    ...(sessionDrawerFilter ? { sessionDrawerFilter } : {}),
   };
 }
