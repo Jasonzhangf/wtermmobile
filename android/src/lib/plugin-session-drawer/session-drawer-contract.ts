@@ -10,6 +10,7 @@ export interface TerminalSessionDrawerItem {
   stableKey: string;
   title: string;
   subtitle: string;
+  sessionName?: string;
   paneLabel?: string | null;
   sessionGroupSlot?: TerminalSessionGroupSlotName | null;
   active?: boolean;

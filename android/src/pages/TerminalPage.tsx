@@ -1391,6 +1391,7 @@ function TerminalPageComponent({
           // 用物理端点（bridgeHost:bridgePort）+ sessionName 作为纯稳定键。
           stableKey,
           title: liveSession?.customName || liveSession?.title || sessionName,
+          sessionName,
           paneLabel: undefined,
           sessionGroupSlot: null,
           active: false,
@@ -1415,6 +1416,7 @@ function TerminalPageComponent({
           id: activeSession.id,
           stableKey: `local:${activeSession.id}::session:${sessionName}`,
           title: activeSession.customName || activeSession.title || sessionName,
+          sessionName,
           subtitle: `${serverIdentity.label} · ${sessionName}${formatTerminalBackendSuffix(activeSession.terminalBackend || 'tmux')}`,
           paneLabel: undefined,
           sessionGroupSlot: resolveSessionGroupSlot(activeSession.id),
@@ -1508,6 +1510,7 @@ function TerminalPageComponent({
       return {
         ...item,
         title: liveSession.customName || liveSession.title || liveSession.sessionName,
+        sessionName: liveSession.sessionName || item.sessionName,
         subtitle: `${item.hostLabel || item.hostKey || 'unknown server'} · ${liveSession.sessionName}`,
         paneLabel: undefined,
         sessionGroupSlot: resolveSessionGroupSlot(liveSession.id),
@@ -1522,6 +1525,7 @@ function TerminalPageComponent({
         id: activeSession.id,
         stableKey: activeSession.id,
         title: activeSession.customName || activeSession.title || activeSession.sessionName,
+        sessionName: activeSession.sessionName,
         subtitle: `${activeSession.connectionName || activeSession.hostId || 'unknown server'} · ${activeSession.sessionName}`,
         sessionGroupSlot: resolveSessionGroupSlot(activeSession.id),
         active: activeSessionIds.has(activeSession.id),

@@ -1682,6 +1682,9 @@
         "src/lib/plugin-host/session-drawer-ui-plugin.tsx",
         "src/components/terminal/TerminalSessionDrawer.test.tsx",
         "src/components/terminal/TerminalSessionDrawer.tsx",
+        "src/components/terminal/TerminalSessionDrawerContent.tsx",
+        "src/components/terminal/TabManagerSheet.tsx",
+        "src/components/terminal/TabManagerSheet.test.tsx",
         "src/lib/traversal-relay-devices.ts",
         "src/lib/traversal-relay-devices.test.ts",
         "src/lib/server-identity.ts",
@@ -1713,6 +1716,8 @@
       ],
       "required_gates": [
         "src/components/terminal/TerminalSessionDrawer.test.tsx",
+        "src/lib/plugin-session-drawer/session-drawer-visibility.test.ts",
+        "src/components/terminal/TabManagerSheet.test.tsx",
         "src/lib/traversal-relay-devices.test.ts",
         "src/lib/server-identity.test.ts",
         "src/pages/TerminalPage.session-drawer.test.tsx",
@@ -2250,6 +2255,7 @@
       "domain": "client-runtime",
       "owners": [
         "src/lib/plugin-session-drawer/session-drawer-contract.ts",
+        "src/lib/plugin-session-drawer/session-drawer-visibility.ts",
         "src/lib/plugin-host/session-drawer-ui-plugin.tsx"
       ],
       "allowed_paths": [
@@ -2264,7 +2270,10 @@
         "src/pages/TerminalPage.tsx",
         "src/App.dynamic-refresh.test.tsx",
         "src/components/terminal/TerminalSessionDrawer.tsx",
+        "src/components/terminal/TerminalSessionDrawerContent.tsx",
         "src/components/terminal/TerminalSessionDrawer.test.tsx",
+        "src/components/terminal/TabManagerSheet.tsx",
+        "src/components/terminal/TabManagerSheet.test.tsx",
         "src/lib/module-registry-truth.test.ts",
         "src/lib/module-import-graph-truth.test.ts",
         "src/lib/resource-registry-truth.test.ts",
@@ -2297,6 +2306,9 @@
       ],
       "required_gates": [
         "src/lib/plugin-host/plugin-host-runtime.test.ts",
+        "src/lib/plugin-session-drawer/session-drawer-visibility.test.ts",
+        "src/components/terminal/TerminalSessionDrawer.test.tsx",
+        "src/components/terminal/TabManagerSheet.test.tsx",
         "src/pages/TerminalPage.session-drawer.test.tsx",
         "src/pages/TerminalPage.session-preview.test.tsx",
         "src/pages/TerminalPage.tab-isolation.test.tsx",

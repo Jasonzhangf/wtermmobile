@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TabManagerSheet, type TabManagerSessionItem } from './TabManagerSheet';
 import type { Session } from '../../lib/types';
+import { SESSION_DRAWER_VISIBILITY_STORAGE_KEY } from '../../lib/plugin-session-drawer/session-drawer-visibility';
 
 class ResizeObserverMock {
   observe() {}
@@ -56,6 +57,7 @@ describe('TabManagerSheet', () => {
     cleanup();
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    localStorage.removeItem(SESSION_DRAWER_VISIBILITY_STORAGE_KEY);
   });
 
   it('commits tab reorder after long-press drag handle move', () => {
@@ -177,5 +179,61 @@ describe('TabManagerSheet', () => {
     );
 
     expect(screen.getByText(/Relay TURN/)).toBeTruthy();
+  });
+
+  it('whitelists master tabs and keeps close on the remaining visible row', () => {
+    const onCloseSession = vi.fn();
+    render(
+      <TabManagerSheet
+        open
+        sessions={[
+          toTabManagerSession(buildSession('master', 'zterm-2')),
+          toTabManagerSession(buildSession('sub', 'zterm-subagent-rw-ui-0906')),
+          toTabManagerSession(buildSession('user', 'OneStop-1')),
+        ]}
+        activeSessionId="master"
+        onClose={vi.fn()}
+        onSwitchSession={vi.fn()}
+        onRenameSession={vi.fn()}
+        onCloseSession={onCloseSession}
+        onMoveSession={vi.fn()}
+        onOpenQuickTabPicker={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('tab-manager-visibility-filter'));
+    expect(screen.getByText('zterm-2')).toBeTruthy();
+    expect(screen.queryByText('zterm-subagent-rw-ui-0906')).toBeNull();
+    expect(screen.queryByText('OneStop-1')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '关闭 zterm-2' }));
+    expect(onCloseSession).toHaveBeenCalledWith('master', 'tab-manager-close-button');
+    expect(screen.queryByRole('button', { name: '关闭 zterm-subagent-rw-ui-0906' })).toBeNull();
+  });
+
+  it('blacklists subagent tabs without hiding unclassified sessions', () => {
+    render(
+      <TabManagerSheet
+        open
+        sessions={[
+          toTabManagerSession(buildSession('master', 'zterm-2')),
+          toTabManagerSession(buildSession('sub', 'zterm-subagent-rw-ui-0906')),
+          toTabManagerSession(buildSession('user', 'OneStop-1')),
+        ]}
+        activeSessionId="master"
+        onClose={vi.fn()}
+        onSwitchSession={vi.fn()}
+        onRenameSession={vi.fn()}
+        onCloseSession={vi.fn()}
+        onMoveSession={vi.fn()}
+        onOpenQuickTabPicker={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('tab-manager-visibility-filter'));
+    fireEvent.click(screen.getByTestId('tab-manager-visibility-filter'));
+    expect(screen.getByText('zterm-2')).toBeTruthy();
+    expect(screen.getByText('OneStop-1')).toBeTruthy();
+    expect(screen.queryByText('zterm-subagent-rw-ui-0906')).toBeNull();
   });
 });
