@@ -476,4 +476,24 @@ describe('bridge-settings helpers', () => {
       'daemon-b',
     ]);
   });
+
+  it('preserves optional session drawer filter settings as the persist owner', () => {
+    const settings = normalizeBridgeSettings({
+      ...baseSettings,
+      sessionDrawerFilter: {
+        version: 1,
+        mode: 'hide-subagent',
+        masterNames: [' zterm-3 ', 'zterm-3'],
+        subagentNames: ['zterm-subagent-rw-ui-0906', ''],
+      },
+    });
+
+    expect(settings.sessionDrawerFilter).toEqual({
+      version: 1,
+      mode: 'hide-subagent',
+      masterNames: ['zterm-3'],
+      subagentNames: ['zterm-subagent-rw-ui-0906'],
+    });
+    expect(normalizeBridgeSettings({ ...baseSettings }).sessionDrawerFilter).toBeUndefined();
+  });
 });

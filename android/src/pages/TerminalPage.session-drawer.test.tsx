@@ -17,6 +17,7 @@ import { renderTerminalShellUi } from '../lib/plugin-host/terminal-shell-ui-plug
 import {
   SESSION_DRAWER_FILTER_STORAGE_KEY,
   serializeSessionDrawerFilterConfig,
+  type SessionDrawerFilterConfig,
 } from '../lib/plugin-session-drawer/session-drawer-visibility';
 import {
   TerminalSessionDrawer,
@@ -2641,17 +2642,6 @@ describe('TerminalPage portrait session drawer', () => {
     expect(onSwitchSession).toHaveBeenCalledTimes(1);
   });
 
-  function persistDrawerFilter(config: {
-    mode: 'all' | 'only-master' | 'hide-subagent';
-    masterNames: string[];
-    subagentNames: string[];
-  }) {
-    localStorage.setItem(
-      SESSION_DRAWER_FILTER_STORAGE_KEY,
-      serializeSessionDrawerFilterConfig({ version: 1, ...config }),
-    );
-  }
-
   function swipeOpenPortraitDrawer() {
     const swipeSurface = document.querySelector('[data-testid^="terminal-swipe-surface-"][data-swipe-enabled="true"]') as HTMLElement;
     fireEvent.touchStart(swipeSurface, { touches: [{ clientX: 56, clientY: 200 }] });
@@ -2662,9 +2652,17 @@ describe('TerminalPage portrait session drawer', () => {
     fireEvent.touchEnd(swipeSurface, { changedTouches: [{ clientX: 236, clientY: 206 }] });
   }
 
+  const visibilityFilterConfig: SessionDrawerFilterConfig = {
+    version: 1,
+    mode: 'only-master',
+    masterNames: ['zterm-3'],
+    subagentNames: ['zterm-subagent-rw-ui-0906'],
+  };
+
   function renderVisibilityFixture(options: {
     onCloseSession?: ComponentProps<typeof TerminalPageBase>['onCloseSession'];
     onCloseDrawerRemoteSession?: ComponentProps<typeof TerminalPageBase>['onCloseDrawerRemoteSession'];
+    sessionDrawerFilterConfig?: SessionDrawerFilterConfig;
   } = {}) {
     const master = makeSession('master');
     master.daemonHostId = 'daemon-a';
@@ -2692,6 +2690,7 @@ describe('TerminalPage portrait session drawer', () => {
         sessions={sessions}
         sessionGroups={sessionGroups}
         activeSession={master}
+        sessionDrawerFilterConfig={options.sessionDrawerFilterConfig}
         onSwitchSession={vi.fn()}
         onMoveSession={vi.fn()}
         onRenameSession={vi.fn()}
@@ -2712,12 +2711,9 @@ describe('TerminalPage portrait session drawer', () => {
   }
 
   it('projects only-master drawer rows and hides subagent plus unclassified names', async () => {
-    persistDrawerFilter({
-      mode: 'only-master',
-      masterNames: ['zterm-3'],
-      subagentNames: ['zterm-subagent-rw-ui-0906'],
+    renderVisibilityFixture({
+      sessionDrawerFilterConfig: visibilityFilterConfig,
     });
-    renderVisibilityFixture();
     swipeOpenPortraitDrawer();
 
     await waitFor(() => expect(screen.getByTestId('terminal-session-drawer-row-master')).toBeTruthy());
@@ -2727,12 +2723,12 @@ describe('TerminalPage portrait session drawer', () => {
   });
 
   it('projects hide-subagent drawer rows while keeping master and unclassified names', async () => {
-    persistDrawerFilter({
-      mode: 'hide-subagent',
-      masterNames: ['zterm-3'],
-      subagentNames: ['zterm-subagent-rw-ui-0906'],
+    renderVisibilityFixture({
+      sessionDrawerFilterConfig: {
+        ...visibilityFilterConfig,
+        mode: 'hide-subagent',
+      },
     });
-    renderVisibilityFixture();
     swipeOpenPortraitDrawer();
 
     await waitFor(() => expect(screen.getByTestId('terminal-session-drawer-row-master')).toBeTruthy());
@@ -2741,12 +2737,9 @@ describe('TerminalPage portrait session drawer', () => {
   });
 
   it('keeps a filtered open tab in sessions and locally closeable without remote kill', async () => {
-    persistDrawerFilter({
-      mode: 'only-master',
-      masterNames: ['zterm-3'],
-      subagentNames: ['zterm-subagent-rw-ui-0906'],
+    const { sessions, onCloseSession, onCloseDrawerRemoteSession } = renderVisibilityFixture({
+      sessionDrawerFilterConfig: visibilityFilterConfig,
     });
-    const { sessions, onCloseSession, onCloseDrawerRemoteSession } = renderVisibilityFixture();
     expect(sessions.map((session) => session.id)).toEqual(['master', 'sub']);
     expect(screen.getByTestId('terminal-view-master')).toBeTruthy();
 
@@ -2761,17 +2754,19 @@ describe('TerminalPage portrait session drawer', () => {
   });
 
   it('keeps remote-id close owner and failure retention after visibility projection', async () => {
-    persistDrawerFilter({
-      mode: 'hide-subagent',
-      masterNames: ['zterm-3'],
-      subagentNames: ['zterm-subagent-rw-ui-0906'],
-    });
     const onCloseSession = vi.fn();
     const onCloseDrawerRemoteSession = vi.fn(async () => {
       throw new Error('remote kill failed');
     });
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const { sessionGroups } = renderVisibilityFixture({ onCloseSession, onCloseDrawerRemoteSession });
+    const { sessionGroups } = renderVisibilityFixture({
+      onCloseSession,
+      onCloseDrawerRemoteSession,
+      sessionDrawerFilterConfig: {
+        ...visibilityFilterConfig,
+        mode: 'hide-subagent',
+      },
+    });
 
     swipeOpenPortraitDrawer();
     await waitFor(() => expect(screen.getByText('OneStop-1')).toBeTruthy());
@@ -2788,6 +2783,32 @@ describe('TerminalPage portrait session drawer', () => {
     expect(onCloseSession).not.toHaveBeenCalled();
     expect(screen.getByTestId('terminal-view-master')).toBeTruthy();
     expect(consoleErrorSpy).toHaveBeenCalled();
+  });
+
+  it('projects from the supplied filter config without reading session-drawer storage', async () => {
+    localStorage.setItem(
+      SESSION_DRAWER_FILTER_STORAGE_KEY,
+      serializeSessionDrawerFilterConfig({
+        version: 1,
+        mode: 'all',
+        masterNames: [],
+        subagentNames: [],
+      }),
+    );
+    const getItemSpy = vi.spyOn(localStorage, 'getItem');
+
+    renderVisibilityFixture({
+      sessionDrawerFilterConfig: visibilityFilterConfig,
+    });
+    swipeOpenPortraitDrawer();
+
+    await waitFor(() => expect(screen.getByTestId('terminal-session-drawer-row-master')).toBeTruthy());
+    expect(screen.queryByTestId('terminal-session-drawer-row-sub')).toBeNull();
+    expect(screen.queryByText('OneStop-1')).toBeNull();
+    expect(
+      getItemSpy.mock.calls.some((call) => call[0] === SESSION_DRAWER_FILTER_STORAGE_KEY),
+    ).toBe(false);
+    getItemSpy.mockRestore();
   });
 });
 
