@@ -17,12 +17,6 @@ import type {
   TerminalSessionDrawerItem,
   TerminalSessionDrawerProps,
 } from '../../lib/plugin-session-drawer/session-drawer-contract';
-import {
-  filterSessionsByDrawerVisibility,
-  resolveSessionNameForVisibility,
-  SESSION_DRAWER_VISIBILITY_LABELS,
-  useSessionDrawerVisibilityMode,
-} from '../../lib/plugin-session-drawer/session-drawer-visibility';
 export type {
   TerminalSessionDrawerHost,
   TerminalSessionDrawerItem,
@@ -72,15 +66,6 @@ function TerminalSessionDrawerComponent({
     terminalBackend: 'tmux' | 'herdr';
   } | null>(null);
   const [folderMenu, setFolderMenu] = useState<{ cwd: string; x: number; y: number } | null>(null);
-  const { mode: visibilityMode, cycleVisibilityMode } = useSessionDrawerVisibilityMode();
-  const listedSessions = useMemo(
-    () => filterSessionsByDrawerVisibility(
-      sessions,
-      visibilityMode,
-      (session) => resolveSessionNameForVisibility(session),
-    ),
-    [sessions, visibilityMode],
-  );
   useEffect(() => {
     if (open) {
       closeButtonRef.current?.focus({ preventScroll: true });
@@ -147,7 +132,7 @@ function TerminalSessionDrawerComponent({
         sessions: [],
       });
     }
-    for (const session of listedSessions) {
+    for (const session of sessions) {
       const hostKey = session.hostKey;
       if (!hostKey) {
         let group = groups.get(UNSCOPED_HOST_GROUP_KEY);
@@ -171,7 +156,7 @@ function TerminalSessionDrawerComponent({
       group.sessions.push(session);
     }
     return Array.from(groups.values());
-  }, [hosts, listedSessions]);
+  }, [hosts, sessions]);
   const showHostRail = hostGroups.length > 0;
   const multiHost = hostGroups.length > 1;
   const [selectedHostKey, setSelectedHostKey] = useState<string | null>(null);
@@ -194,11 +179,11 @@ function TerminalSessionDrawerComponent({
   }, [hostGroups, selectedHostKey]);
   const visibleSessions = useMemo(() => {
     if (!effectiveHostKey) {
-      return listedSessions;
+      return sessions;
     }
     const group = hostGroups.find((g) => g.groupKey === effectiveHostKey);
     return group?.sessions || [];
-  }, [effectiveHostKey, hostGroups, listedSessions]);
+  }, [effectiveHostKey, hostGroups, sessions]);
   const cwdGroups = useMemo(() => {
     const groups = new Map<string, TerminalSessionDrawerItem[]>();
     for (const session of visibleSessions) {
@@ -381,28 +366,6 @@ function TerminalSessionDrawerComponent({
                 {previewSelectedSessionIds.length}/6
               </span>
             ) : null}
-            <button
-              type="button"
-              data-testid="terminal-session-drawer-visibility-filter"
-              aria-label={`会话可见性：${SESSION_DRAWER_VISIBILITY_LABELS[visibilityMode]}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                cycleVisibilityMode();
-              }}
-              style={{
-                height: '28px',
-                padding: '0 8px',
-                borderRadius: '6px',
-                border: '1px solid var(--zterm-panel-border)',
-                background: visibilityMode === 'all' ? 'var(--zterm-panel-surface)' : 'var(--zterm-panel-active)',
-                color: visibilityMode === 'all' ? 'var(--zterm-panel-text)' : 'var(--zterm-panel-accent)',
-                fontSize: '11px',
-                fontWeight: 850,
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {SESSION_DRAWER_VISIBILITY_LABELS[visibilityMode]}
-            </button>
             <button
               type="button"
               aria-label="关闭 session 抽屉"

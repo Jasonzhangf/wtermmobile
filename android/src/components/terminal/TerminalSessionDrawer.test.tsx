@@ -3,12 +3,10 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TerminalSessionDrawer } from './TerminalSessionDrawer';
-import { SESSION_DRAWER_VISIBILITY_STORAGE_KEY } from '../../lib/plugin-session-drawer/session-drawer-visibility';
 
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
-  localStorage.removeItem(SESSION_DRAWER_VISIBILITY_STORAGE_KEY);
 });
 
 describe('TerminalSessionDrawer', () => {
@@ -1367,80 +1365,5 @@ describe('TerminalSessionDrawer catalog availability', () => {
     render(<TerminalSessionDrawer open sessions={baseSessions} onClose={vi.fn()} onSelectSession={vi.fn()} onCloseSession={vi.fn()} onOpenQuickTabPicker={vi.fn()} />);
     expect(screen.getByTestId('terminal-session-drawer-row-herdr-missing').style.opacity).toBe('1');
     expect(screen.queryByTestId('terminal-session-drawer-retry-herdr-missing')).toBeNull();
-  });
-});
-
-describe('TerminalSessionDrawer visibility filter', () => {
-  const mixedSessions = [
-    {
-      id: 'master-row',
-      stableKey: 'stable-master',
-      title: 'studio master',
-      sessionName: 'zterm-3',
-      subtitle: 'studio · zterm-3',
-    },
-    {
-      id: 'subagent-row',
-      stableKey: 'stable-subagent',
-      title: 'helper',
-      sessionName: 'zterm-subagent-rw-ui-0906',
-      subtitle: 'studio · zterm-subagent-rw-ui-0906',
-    },
-    {
-      id: 'user-row',
-      stableKey: 'stable-user',
-      title: 'OneStop-1',
-      sessionName: 'OneStop-1',
-      subtitle: 'studio · OneStop-1',
-    },
-  ];
-
-  function renderMixed(onCloseSession = vi.fn()) {
-    render(
-      <TerminalSessionDrawer
-        open
-        sessions={mixedSessions}
-        onClose={vi.fn()}
-        onSelectSession={vi.fn()}
-        onCloseSession={onCloseSession}
-        onOpenQuickTabPicker={vi.fn()}
-      />,
-    );
-    return onCloseSession;
-  }
-
-  it('whitelists master rows and hides subagent plus unclassified', () => {
-    renderMixed();
-    expect(screen.getByTestId('terminal-session-drawer-row-master-row')).toBeTruthy();
-    expect(screen.getByTestId('terminal-session-drawer-row-subagent-row')).toBeTruthy();
-    expect(screen.getByTestId('terminal-session-drawer-row-user-row')).toBeTruthy();
-
-    fireEvent.click(screen.getByTestId('terminal-session-drawer-visibility-filter'));
-
-    expect(screen.getByTestId('terminal-session-drawer-row-master-row')).toBeTruthy();
-    expect(screen.queryByTestId('terminal-session-drawer-row-subagent-row')).toBeNull();
-    expect(screen.queryByTestId('terminal-session-drawer-row-user-row')).toBeNull();
-    expect(screen.getByTestId('terminal-session-drawer-visibility-filter').textContent).toBe('仅 master');
-  });
-
-  it('blacklists subagent rows without hiding unclassified or master', () => {
-    renderMixed();
-    fireEvent.click(screen.getByTestId('terminal-session-drawer-visibility-filter'));
-    fireEvent.click(screen.getByTestId('terminal-session-drawer-visibility-filter'));
-
-    expect(screen.getByTestId('terminal-session-drawer-row-master-row')).toBeTruthy();
-    expect(screen.getByTestId('terminal-session-drawer-row-user-row')).toBeTruthy();
-    expect(screen.queryByTestId('terminal-session-drawer-row-subagent-row')).toBeNull();
-    expect(screen.getByTestId('terminal-session-drawer-visibility-filter').textContent).toBe('隐藏 subagent');
-  });
-
-  it('keeps close routed to the existing owner for visible rows and never shows hidden close controls', () => {
-    const onCloseSession = renderMixed();
-    fireEvent.click(screen.getByTestId('terminal-session-drawer-visibility-filter'));
-
-    expect(screen.queryByTestId('terminal-session-drawer-close-subagent-row')).toBeNull();
-    fireEvent.click(screen.getByTestId('terminal-session-drawer-close-master-row'));
-    expect(onCloseSession).toHaveBeenCalledTimes(1);
-    expect(onCloseSession).toHaveBeenCalledWith('master-row');
   });
 });

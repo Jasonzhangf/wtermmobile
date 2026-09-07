@@ -1,80 +1,134 @@
-import { useCallback, useState } from 'react';
+export const SESSION_DRAWER_FILTER_STORAGE_KEY = 'zterm:session-drawer-filter:v1';
 
-export const SESSION_DRAWER_VISIBILITY_STORAGE_KEY = 'zterm:session-drawer-visibility-filter:v1';
-
-export const SESSION_DRAWER_VISIBILITY_MODES = [
+export const SESSION_DRAWER_FILTER_MODES = [
   'all',
-  'whitelist-master',
-  'blacklist-subagent',
+  'only-master',
+  'hide-subagent',
 ] as const;
 
-export type SessionDrawerVisibilityMode = (typeof SESSION_DRAWER_VISIBILITY_MODES)[number];
-export type SessionDrawerVisibilityClass = 'master' | 'subagent' | 'unclassified';
+export type SessionDrawerFilterMode = (typeof SESSION_DRAWER_FILTER_MODES)[number];
+export type SessionDrawerFilterClass = 'master' | 'subagent' | 'unclassified';
 
-export const DEFAULT_SESSION_DRAWER_VISIBILITY_MODE: SessionDrawerVisibilityMode = 'all';
-
-export const SESSION_DRAWER_VISIBILITY_LABELS: Record<SessionDrawerVisibilityMode, string> = {
-  all: '全部',
-  'whitelist-master': '仅 master',
-  'blacklist-subagent': '隐藏 subagent',
-};
-
-interface SessionDrawerVisibilityStorage {
-  getItem: (key: string) => string | null;
-  setItem: (key: string, value: string) => void;
+export interface SessionDrawerFilterConfig {
+  version: 1;
+  mode: SessionDrawerFilterMode;
+  masterNames: string[];
+  subagentNames: string[];
 }
 
-const SUBAGENT_NAME_PATTERN = /(?:^|[-_])subagent(?:[-_]|$)/i;
-const MASTER_EXACT_NAME_PATTERN = /^master$/i;
-const MASTER_ZTERM_PANE_PATTERN = /^zterm-\d+$/i;
-const MASTER_DSH_PLUGIN_PATTERN = /^dsh-plugins-\d+$/i;
+export const DEFAULT_SESSION_DRAWER_FILTER_CONFIG: SessionDrawerFilterConfig = {
+  version: 1,
+  mode: 'all',
+  masterNames: [],
+  subagentNames: [],
+};
 
-export function classifySessionDrawerVisibility(sessionName: string): SessionDrawerVisibilityClass {
+export const SESSION_DRAWER_FILTER_LABELS: Record<SessionDrawerFilterMode, string> = {
+  all: '全部',
+  'only-master': '仅 master',
+  'hide-subagent': '隐藏 subagent',
+};
+
+function isSessionDrawerFilterMode(value: string): value is SessionDrawerFilterMode {
+  return (SESSION_DRAWER_FILTER_MODES as readonly string[]).includes(value);
+}
+
+function normalizeNameList(names: unknown): string[] {
+  if (!Array.isArray(names)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const raw of names) {
+    if (typeof raw !== 'string') {
+      continue;
+    }
+    const name = raw.trim();
+    if (!name || seen.has(name)) {
+      continue;
+    }
+    seen.add(name);
+    normalized.push(name);
+  }
+  return normalized;
+}
+
+export function createDefaultSessionDrawerFilterConfig(): SessionDrawerFilterConfig {
+  return {
+    version: 1,
+    mode: DEFAULT_SESSION_DRAWER_FILTER_CONFIG.mode,
+    masterNames: [],
+    subagentNames: [],
+  };
+}
+
+export function normalizeSessionDrawerFilterConfig(value: unknown): SessionDrawerFilterConfig {
+  const candidate = value && typeof value === 'object'
+    ? value as Partial<SessionDrawerFilterConfig>
+    : {};
+  return {
+    version: 1,
+    mode: typeof candidate.mode === 'string' && isSessionDrawerFilterMode(candidate.mode)
+      ? candidate.mode
+      : DEFAULT_SESSION_DRAWER_FILTER_CONFIG.mode,
+    masterNames: normalizeNameList(candidate.masterNames),
+    subagentNames: normalizeNameList(candidate.subagentNames),
+  };
+}
+
+export function serializeSessionDrawerFilterConfig(config: SessionDrawerFilterConfig): string {
+  return JSON.stringify(normalizeSessionDrawerFilterConfig(config));
+}
+
+export function parseSessionDrawerFilterConfig(raw: string | null | undefined): SessionDrawerFilterConfig {
+  if (!raw) {
+    return createDefaultSessionDrawerFilterConfig();
+  }
+  try {
+    return normalizeSessionDrawerFilterConfig(JSON.parse(raw) as unknown);
+  } catch {
+    return createDefaultSessionDrawerFilterConfig();
+  }
+}
+
+export function resolveSessionNameForVisibility(input: {
+  sessionName?: string | null;
+}): string {
+  return typeof input.sessionName === 'string' ? input.sessionName.trim() : '';
+}
+
+export function classifySessionDrawerVisibility(
+  sessionName: string,
+  config: Pick<SessionDrawerFilterConfig, 'masterNames' | 'subagentNames'>,
+): SessionDrawerFilterClass {
   const name = sessionName.trim();
   if (!name) {
     return 'unclassified';
   }
-  if (SUBAGENT_NAME_PATTERN.test(name)) {
+  const masterNames = new Set(normalizeNameList(config.masterNames));
+  const subagentNames = new Set(normalizeNameList(config.subagentNames));
+  const listedMaster = masterNames.has(name);
+  const listedSubagent = subagentNames.has(name);
+  if (listedMaster && listedSubagent) {
+    return 'unclassified';
+  }
+  if (listedSubagent) {
     return 'subagent';
   }
-  if (
-    MASTER_EXACT_NAME_PATTERN.test(name)
-    || MASTER_ZTERM_PANE_PATTERN.test(name)
-    || MASTER_DSH_PLUGIN_PATTERN.test(name)
-  ) {
+  if (listedMaster) {
     return 'master';
   }
   return 'unclassified';
 }
 
-export function resolveSessionNameForVisibility(input: {
-  sessionName?: string | null;
-  title?: string | null;
-  subtitle?: string | null;
-}): string {
-  const explicit = input.sessionName?.trim();
-  if (explicit) {
-    return explicit;
-  }
-  const subtitle = input.subtitle?.trim() || '';
-  const parts = subtitle.split(' · ');
-  if (parts.length >= 2) {
-    const last = parts[parts.length - 1].replace(/\s+\([^)]*\)\s*$/, '').trim();
-    if (last) {
-      return last;
-    }
-  }
-  return input.title?.trim() || '';
-}
-
 export function sessionMatchesDrawerVisibility(
-  sessionClass: SessionDrawerVisibilityClass,
-  mode: SessionDrawerVisibilityMode,
+  sessionClass: SessionDrawerFilterClass,
+  mode: SessionDrawerFilterMode,
 ): boolean {
-  if (mode === 'whitelist-master') {
+  if (mode === 'only-master') {
     return sessionClass === 'master';
   }
-  if (mode === 'blacklist-subagent') {
+  if (mode === 'hide-subagent') {
     return sessionClass !== 'subagent';
   }
   return true;
@@ -82,71 +136,17 @@ export function sessionMatchesDrawerVisibility(
 
 export function filterSessionsByDrawerVisibility<T>(
   sessions: readonly T[],
-  mode: SessionDrawerVisibilityMode,
+  config: SessionDrawerFilterConfig,
   resolveSessionName: (session: T) => string,
 ): T[] {
-  if (mode === 'all') {
+  const normalized = normalizeSessionDrawerFilterConfig(config);
+  if (normalized.mode === 'all') {
     return [...sessions];
   }
   return sessions.filter((session) => (
     sessionMatchesDrawerVisibility(
-      classifySessionDrawerVisibility(resolveSessionName(session)),
-      mode,
+      classifySessionDrawerVisibility(resolveSessionName(session), normalized),
+      normalized.mode,
     )
   ));
-}
-
-export function nextSessionDrawerVisibilityMode(
-  mode: SessionDrawerVisibilityMode,
-): SessionDrawerVisibilityMode {
-  const index = SESSION_DRAWER_VISIBILITY_MODES.indexOf(mode);
-  return SESSION_DRAWER_VISIBILITY_MODES[(index + 1) % SESSION_DRAWER_VISIBILITY_MODES.length];
-}
-
-function isSessionDrawerVisibilityMode(value: string): value is SessionDrawerVisibilityMode {
-  return (SESSION_DRAWER_VISIBILITY_MODES as readonly string[]).includes(value);
-}
-
-export function readSessionDrawerVisibilityMode(
-  storage: SessionDrawerVisibilityStorage | null | undefined = typeof localStorage === 'undefined'
-    ? null
-    : localStorage,
-): SessionDrawerVisibilityMode {
-  if (!storage) {
-    return DEFAULT_SESSION_DRAWER_VISIBILITY_MODE;
-  }
-  try {
-    const raw = storage.getItem(SESSION_DRAWER_VISIBILITY_STORAGE_KEY);
-    if (!raw) {
-      return DEFAULT_SESSION_DRAWER_VISIBILITY_MODE;
-    }
-    const parsed = JSON.parse(raw) as { version?: number; mode?: unknown };
-    if (parsed?.version !== 1 || typeof parsed.mode !== 'string' || !isSessionDrawerVisibilityMode(parsed.mode)) {
-      return DEFAULT_SESSION_DRAWER_VISIBILITY_MODE;
-    }
-    return parsed.mode;
-  } catch {
-    return DEFAULT_SESSION_DRAWER_VISIBILITY_MODE;
-  }
-}
-
-export function persistSessionDrawerVisibilityMode(
-  mode: SessionDrawerVisibilityMode,
-  storage: SessionDrawerVisibilityStorage | null | undefined = typeof localStorage === 'undefined'
-    ? null
-    : localStorage,
-): SessionDrawerVisibilityMode {
-  if (!storage) {
-    return mode;
-  }
-  storage.setItem(SESSION_DRAWER_VISIBILITY_STORAGE_KEY, JSON.stringify({ version: 1, mode }));
-  return mode;
-}
-
-export function useSessionDrawerVisibilityMode() {
-  const [mode, setMode] = useState<SessionDrawerVisibilityMode>(() => readSessionDrawerVisibilityMode());
-  const cycleVisibilityMode = useCallback(() => {
-    setMode((current) => persistSessionDrawerVisibilityMode(nextSessionDrawerVisibilityMode(current)));
-  }, []);
-  return { mode, cycleVisibilityMode };
 }

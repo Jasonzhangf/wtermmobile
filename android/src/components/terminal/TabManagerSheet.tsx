@@ -1,10 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { mobileTheme } from '../../lib/mobile-ui';
-import {
-  filterSessionsByDrawerVisibility,
-  SESSION_DRAWER_VISIBILITY_LABELS,
-  useSessionDrawerVisibilityMode,
-} from '../../lib/plugin-session-drawer/session-drawer-visibility';
 import { RenameDialog } from './RenameDialog';
 
 const DRAG_HANDLE_LONG_PRESS_MS = 360;
@@ -73,24 +68,6 @@ function moveSessionItem(sessions: TabManagerSessionItem[], sessionId: string, t
   return nextSessions;
 }
 
-function mapDisplayedDropIndexToOriginal(
-  original: TabManagerSessionItem[],
-  displayed: TabManagerSessionItem[],
-  displayedIndex: number,
-) {
-  if (displayed.length === 0) {
-    return 0;
-  }
-  if (displayedIndex >= displayed.length) {
-    const lastId = displayed[displayed.length - 1]?.id;
-    const lastIndex = original.findIndex((session) => session.id === lastId);
-    return lastIndex >= 0 ? lastIndex : original.length - 1;
-  }
-  const targetId = displayed[displayedIndex]?.id;
-  const targetIndex = original.findIndex((session) => session.id === targetId);
-  return targetIndex >= 0 ? targetIndex : displayedIndex;
-}
-
 function TabManagerSheetComponent({
   open,
   sessions,
@@ -115,11 +92,6 @@ function TabManagerSheetComponent({
   const [renameTarget, setRenameTarget] = useState<TabManagerSessionItem | null>(null);
   const dragStateRef = useRef<typeof dragState>(null);
   const lastPointerCloseIntentRef = useRef<{ sessionId: string; at: number } | null>(null);
-  const { mode: visibilityMode, cycleVisibilityMode } = useSessionDrawerVisibilityMode();
-  const listedSessions = useMemo(
-    () => filterSessionsByDrawerVisibility(sessions, visibilityMode, (session) => session.sessionName),
-    [sessions, visibilityMode],
-  );
 
   useEffect(() => {
     dragStateRef.current = dragState;
@@ -143,10 +115,10 @@ function TabManagerSheetComponent({
 
   const previewSessions = useMemo(() => {
     if (!dragState) {
-      return listedSessions;
+      return sessions;
     }
-    return moveSessionItem(listedSessions, dragState.sessionId, dragState.targetIndex);
-  }, [dragState, listedSessions]);
+    return moveSessionItem(sessions, dragState.sessionId, dragState.targetIndex);
+  }, [dragState, sessions]);
 
   const clearDragTimer = () => {
     if (dragTimerRef.current !== null) {
@@ -221,29 +193,6 @@ function TabManagerSheetComponent({
               当前 tab 只属于本次运行。长按右侧排序按钮可重排当前 tab。
             </div>
           </div>
-          <button
-            type="button"
-            data-testid="tab-manager-visibility-filter"
-            aria-label={`会话可见性：${SESSION_DRAWER_VISIBILITY_LABELS[visibilityMode]}`}
-            onClick={(event) => {
-              event.stopPropagation();
-              cycleVisibilityMode();
-            }}
-            style={{
-              minHeight: '36px',
-              padding: '0 10px',
-              borderRadius: '12px',
-              border: 'none',
-              backgroundColor: visibilityMode === 'all' ? '#ffffff' : 'rgba(31,214,122,0.16)',
-              color: mobileTheme.colors.lightText,
-              fontSize: '12px',
-              fontWeight: 800,
-              boxShadow: mobileTheme.shadow.soft,
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {SESSION_DRAWER_VISIBILITY_LABELS[visibilityMode]}
-          </button>
           <button
             onClick={onClose}
             style={{
@@ -430,14 +379,7 @@ function TabManagerSheetComponent({
                       const currentDragState = dragStateRef.current;
                       if (currentDragState && currentDragState.sessionId === session.id && currentDragState.pointerId === event.pointerId) {
                         if (currentDragState.targetIndex !== currentDragState.startIndex) {
-                          onMoveSession(
-                            session.id,
-                            mapDisplayedDropIndexToOriginal(
-                              sessions,
-                              listedSessions,
-                              currentDragState.targetIndex,
-                            ),
-                          );
+                          onMoveSession(session.id, currentDragState.targetIndex);
                         }
                         setDragStateSync(null);
                       }
