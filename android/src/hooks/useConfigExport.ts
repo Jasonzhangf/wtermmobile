@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { Directory, Filesystem } from '@capacitor/filesystem';
+import { Directory, Encoding, Filesystem } from '@capacitor/filesystem';
 import { getBrowserStorage } from '../lib/browser-storage';
 import { APP_VERSION } from '../lib/app-version';
 import {
@@ -11,6 +11,21 @@ import {
 const CONFIG_EXPORT_DIR = 'zterm-config-export';
 const CONFIG_EXPORT_FILE = 'zterm-config.json';
 const CONFIG_EXPORT_PATH = `${CONFIG_EXPORT_DIR}/${CONFIG_EXPORT_FILE}`;
+const CONFIG_EXPORT_DIRECTORY = Directory.Data;
+
+async function ensureConfigExportDirectory() {
+  try {
+    await Filesystem.mkdir({
+      path: CONFIG_EXPORT_DIR,
+      directory: CONFIG_EXPORT_DIRECTORY,
+      recursive: true,
+    });
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== 'Directory exists') {
+      throw error;
+    }
+  }
+}
 
 type ConfigTransferResult =
   | { ok: true; path: string; uri?: string }
@@ -35,15 +50,12 @@ export function useConfigExport() {
         appVersion: APP_VERSION,
       });
       const json = JSON.stringify(payload, null, 2);
-      await Filesystem.mkdir({
-        path: CONFIG_EXPORT_DIR,
-        directory: Directory.ExternalStorage,
-        recursive: true,
-      });
+      await ensureConfigExportDirectory();
       const result = await Filesystem.writeFile({
         path: CONFIG_EXPORT_PATH,
         data: json,
-        directory: Directory.ExternalStorage,
+        directory: CONFIG_EXPORT_DIRECTORY,
+        encoding: Encoding.UTF8,
       });
       return { ok: true, path: CONFIG_EXPORT_PATH, uri: result.uri } satisfies ConfigTransferResult;
     } catch (error) {
@@ -65,7 +77,8 @@ export function useConfigExport() {
       }
       const result = await Filesystem.readFile({
         path: CONFIG_EXPORT_PATH,
-        directory: Directory.ExternalStorage,
+        directory: CONFIG_EXPORT_DIRECTORY,
+        encoding: Encoding.UTF8,
       });
       const json = typeof result.data === 'string' ? result.data : '';
       const payload: unknown = JSON.parse(json);
