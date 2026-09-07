@@ -15,6 +15,10 @@ import {
 } from './TerminalPage';
 import { renderTerminalShellUi } from '../lib/plugin-host/terminal-shell-ui-plugin';
 import {
+  SESSION_DRAWER_FILTER_STORAGE_KEY,
+  serializeSessionDrawerFilterConfig,
+} from '../lib/plugin-session-drawer/session-drawer-visibility';
+import {
   TerminalSessionDrawer,
   type TerminalSessionDrawerProps,
 } from '../components/terminal/TerminalSessionDrawer';
@@ -2635,6 +2639,155 @@ describe('TerminalPage portrait session drawer', () => {
     fireEvent.click(otherRow, { detail: 1 });
     expect(onSwitchSession).toHaveBeenCalledWith('other');
     expect(onSwitchSession).toHaveBeenCalledTimes(1);
+  });
+
+  function persistDrawerFilter(config: {
+    mode: 'all' | 'only-master' | 'hide-subagent';
+    masterNames: string[];
+    subagentNames: string[];
+  }) {
+    localStorage.setItem(
+      SESSION_DRAWER_FILTER_STORAGE_KEY,
+      serializeSessionDrawerFilterConfig({ version: 1, ...config }),
+    );
+  }
+
+  function swipeOpenPortraitDrawer() {
+    const swipeSurface = document.querySelector('[data-testid^="terminal-swipe-surface-"][data-swipe-enabled="true"]') as HTMLElement;
+    fireEvent.touchStart(swipeSurface, { touches: [{ clientX: 56, clientY: 200 }] });
+    fireEvent.touchMove(swipeSurface, {
+      touches: [{ clientX: 236, clientY: 206 }],
+      cancelable: true,
+    });
+    fireEvent.touchEnd(swipeSurface, { changedTouches: [{ clientX: 236, clientY: 206 }] });
+  }
+
+  function renderVisibilityFixture(options: {
+    onCloseSession?: ComponentProps<typeof TerminalPageBase>['onCloseSession'];
+    onCloseDrawerRemoteSession?: ComponentProps<typeof TerminalPageBase>['onCloseDrawerRemoteSession'];
+  } = {}) {
+    const master = makeSession('master');
+    master.daemonHostId = 'daemon-a';
+    master.sessionName = 'zterm-3';
+    master.title = 'master tab';
+    const subagent = makeSession('sub');
+    subagent.daemonHostId = 'daemon-a';
+    subagent.sessionName = 'zterm-subagent-rw-ui-0906';
+    subagent.title = 'subagent tab';
+    const sessions = [master, subagent];
+    const onCloseSession = options.onCloseSession || vi.fn();
+    const onCloseDrawerRemoteSession = options.onCloseDrawerRemoteSession || vi.fn();
+    const sessionGroups = [{
+      id: 'daemon:daemon-a',
+      name: 'Daemon A',
+      bridgeHost: '100.127.23.27',
+      bridgePort: 3333,
+      daemonHostId: 'daemon-a',
+      authToken: 'token-a',
+      sessionNames: ['zterm-3', 'zterm-subagent-rw-ui-0906', 'OneStop-1'],
+      lastOpenedAt: 1,
+    }];
+    render(
+      <TerminalPage
+        sessions={sessions}
+        sessionGroups={sessionGroups}
+        activeSession={master}
+        onSwitchSession={vi.fn()}
+        onMoveSession={vi.fn()}
+        onRenameSession={vi.fn()}
+        onCloseSession={onCloseSession}
+        onOpenConnections={vi.fn()}
+        onOpenQuickTabPicker={vi.fn()}
+        onOpenDrawerRemoteSession={vi.fn()}
+        onCloseDrawerRemoteSession={onCloseDrawerRemoteSession}
+        onResize={vi.fn()}
+        onTerminalInput={vi.fn()}
+        onTerminalViewportChange={vi.fn()}
+        quickActions={[]}
+        shortcutActions={[]}
+        sessionDraft=""
+      />,
+    );
+    return { sessions, sessionGroups, onCloseSession, onCloseDrawerRemoteSession };
+  }
+
+  it('projects only-master drawer rows and hides subagent plus unclassified names', async () => {
+    persistDrawerFilter({
+      mode: 'only-master',
+      masterNames: ['zterm-3'],
+      subagentNames: ['zterm-subagent-rw-ui-0906'],
+    });
+    renderVisibilityFixture();
+    swipeOpenPortraitDrawer();
+
+    await waitFor(() => expect(screen.getByTestId('terminal-session-drawer-row-master')).toBeTruthy());
+    expect(screen.queryByTestId('terminal-session-drawer-row-sub')).toBeNull();
+    expect(screen.queryByTestId('terminal-session-drawer-row-remote:daemon:daemon-a::session:OneStop-1')).toBeNull();
+    expect(screen.queryByText('OneStop-1')).toBeNull();
+  });
+
+  it('projects hide-subagent drawer rows while keeping master and unclassified names', async () => {
+    persistDrawerFilter({
+      mode: 'hide-subagent',
+      masterNames: ['zterm-3'],
+      subagentNames: ['zterm-subagent-rw-ui-0906'],
+    });
+    renderVisibilityFixture();
+    swipeOpenPortraitDrawer();
+
+    await waitFor(() => expect(screen.getByTestId('terminal-session-drawer-row-master')).toBeTruthy());
+    expect(screen.getByTestId('terminal-session-drawer-row-remote:daemon:daemon-a::session:OneStop-1')).toBeTruthy();
+    expect(screen.queryByTestId('terminal-session-drawer-row-sub')).toBeNull();
+  });
+
+  it('keeps a filtered open tab in sessions and locally closeable without remote kill', async () => {
+    persistDrawerFilter({
+      mode: 'only-master',
+      masterNames: ['zterm-3'],
+      subagentNames: ['zterm-subagent-rw-ui-0906'],
+    });
+    const { sessions, onCloseSession, onCloseDrawerRemoteSession } = renderVisibilityFixture();
+    expect(sessions.map((session) => session.id)).toEqual(['master', 'sub']);
+    expect(screen.getByTestId('terminal-view-master')).toBeTruthy();
+
+    swipeOpenPortraitDrawer();
+    await waitFor(() => expect(screen.getByTestId('terminal-session-drawer-close-master')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('terminal-session-drawer-close-master'));
+
+    expect(onCloseSession).toHaveBeenCalledWith('master', 'terminal-session-drawer-close-button');
+    expect(onCloseSession).not.toHaveBeenCalledWith('sub', expect.anything());
+    expect(onCloseDrawerRemoteSession).not.toHaveBeenCalled();
+    expect(sessions.map((session) => session.id)).toEqual(['master', 'sub']);
+  });
+
+  it('keeps remote-id close owner and failure retention after visibility projection', async () => {
+    persistDrawerFilter({
+      mode: 'hide-subagent',
+      masterNames: ['zterm-3'],
+      subagentNames: ['zterm-subagent-rw-ui-0906'],
+    });
+    const onCloseSession = vi.fn();
+    const onCloseDrawerRemoteSession = vi.fn(async () => {
+      throw new Error('remote kill failed');
+    });
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { sessionGroups } = renderVisibilityFixture({ onCloseSession, onCloseDrawerRemoteSession });
+
+    swipeOpenPortraitDrawer();
+    await waitFor(() => expect(screen.getByText('OneStop-1')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('terminal-session-drawer-close-remote:daemon:daemon-a::session:OneStop-1'));
+    fireEvent.click(await screen.findByTestId('zterm-dialog-confirm'));
+
+    await waitFor(() => expect(screen.getByTestId('zterm-dialog-message').textContent).toContain('无法关闭 OneStop-1'));
+    expect(onCloseDrawerRemoteSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionNames: sessionGroups[0]!.sessionNames,
+      }),
+      'OneStop-1',
+    );
+    expect(onCloseSession).not.toHaveBeenCalled();
+    expect(screen.getByTestId('terminal-view-master')).toBeTruthy();
+    expect(consoleErrorSpy).toHaveBeenCalled();
   });
 });
 
