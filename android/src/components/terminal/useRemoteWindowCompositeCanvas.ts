@@ -55,10 +55,28 @@ export function useRemoteWindowCompositeCanvas({
     }
     let cancelled = false;
     let callbackId: number | null = null;
+    let callbackGeneration = 0;
     let lastPresentedFrames: number | null = null;
     let cachedCanvas: HTMLCanvasElement | null = null;
     let cachedContext: CanvasRenderingContext2D | null = null;
     const requestFrame = video.requestVideoFrameCallback.bind(video);
+    const scheduleFrame = () => {
+      if (cancelled) {
+        return;
+      }
+      if (callbackId !== null) {
+        video.cancelVideoFrameCallback?.(callbackId);
+      }
+      const generation = callbackGeneration + 1;
+      callbackGeneration = generation;
+      callbackId = requestFrame((now, metadata) => {
+        if (cancelled || generation !== callbackGeneration) {
+          return;
+        }
+        callbackId = null;
+        drawFocus(now, metadata);
+      });
+    };
     const drawFocus = (_now: number, metadata: { presentedFrames?: number }) => {
       if (cancelled) {
         return;
@@ -67,12 +85,12 @@ export function useRemoteWindowCompositeCanvas({
         ? Number(metadata.presentedFrames)
         : null;
       if (presentedFrames !== null && presentedFrames === lastPresentedFrames) {
-        callbackId = requestFrame(drawFocus);
+        scheduleFrame();
         return;
       }
       const canvas = focusDisplayCanvasRef.current;
       if (!canvas || video.readyState < 2 || video.videoWidth <= 0 || video.videoHeight <= 0) {
-        callbackId = requestFrame(drawFocus);
+        scheduleFrame();
         return;
       }
       if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
@@ -94,11 +112,19 @@ export function useRemoteWindowCompositeCanvas({
         onProjectionError?.(error instanceof Error ? error.message : 'remote window focus canvas draw failed');
         return;
       }
-      callbackId = requestFrame(drawFocus);
+      scheduleFrame();
     };
-    callbackId = requestFrame(drawFocus);
+    scheduleFrame();
+    const reschedule = () => {
+      scheduleFrame();
+    };
+    video.addEventListener('loadeddata', reschedule);
+    video.addEventListener('playing', reschedule);
     return () => {
       cancelled = true;
+      callbackGeneration += 1;
+      video.removeEventListener('loadeddata', reschedule);
+      video.removeEventListener('playing', reschedule);
       if (callbackId !== null) {
         video.cancelVideoFrameCallback?.(callbackId);
       }
