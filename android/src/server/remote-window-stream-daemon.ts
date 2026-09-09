@@ -740,15 +740,13 @@ export function createRemoteWindowStreamDaemonRuntime(
       if (!requestedVideoProfile) {
         throw new Error('remote window stream start requires videoProfile');
       }
-      const initialEncoding = {
-        maxBitrate: requestedVideoProfile.maxBitrateBps,
-        maxFramerate: requestedVideoProfile.maxFrameRateFps,
-      };
-      const videoSender = peerConnection.addTransceiver(videoTrack, {
-        direction: 'sendonly',
-        streams: [new MediaStream({ id: videoTrack.id })],
-        sendEncodings: [initialEncoding],
-      }).sender;
+      // @ponytail: wrtc's sendonly transceiver path can negotiate an inactive
+      // answer on real Android receivers. Attach a normal sender first; the
+      // quality owner applies encodings after the answer is established.
+      const videoSender = peerConnection.addTrack(
+        videoTrack,
+        new MediaStream({ id: videoTrack.id }),
+      );
       const mediaBindings: RemoteWindowStreamMediaBinding[] = [{
         role: 'focus',
         epoch: 0,
@@ -815,14 +813,10 @@ export function createRemoteWindowStreamDaemonRuntime(
       if (hasOverviewLane) {
         streamEntry.overviewVideoSource = createVideoSource();
         streamEntry.overviewVideoTrack = streamEntry.overviewVideoSource.createTrack();
-        streamEntry.overviewVideoSender = peerConnection.addTransceiver(streamEntry.overviewVideoTrack, {
-          direction: 'sendonly',
-          streams: [new MediaStream({ id: 'overview' })],
-          sendEncodings: [{
-            maxBitrate: requestedVideoProfile.overviewMaxBitrateBps,
-            maxFramerate: requestedVideoProfile.overviewMaxFrameRateFps,
-          }],
-        }).sender;
+        streamEntry.overviewVideoSender = peerConnection.addTrack(
+          streamEntry.overviewVideoTrack,
+          new MediaStream({ id: 'overview' }),
+        );
         mediaBindings.push({
           role: 'overview',
           epoch: 0,

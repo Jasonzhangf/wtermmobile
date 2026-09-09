@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import type { RemoteWindowStreamStartRequestV2Payload } from '@zterm/shared/protocol';
 import { makeRemoteWindowVideoProfileFixture } from './remote-window-video-profile-test-fixture';
@@ -11,5 +12,14 @@ const start = (streamId: string): RemoteWindowStreamStartRequestV2Payload => ({ 
 describe('remote window stream daemon v2 contract', () => {
   it('uses the v2 typed start contract', () => {
     expect(start('typed-v2').mediaPlanVersion).toBe(2);
+  });
+
+  it('uses addTrack for v2 sender negotiation and applies quality after answer', () => {
+    const source = readFileSync(new URL('./remote-window-stream-daemon.ts', import.meta.url), 'utf8');
+    expect(source).toContain('const videoSender = peerConnection.addTrack(');
+    expect(source).toContain("new MediaStream({ id: videoTrack.id })");
+    expect(source).toContain('streamEntry.overviewVideoSender = peerConnection.addTrack(');
+    expect(source).not.toContain('peerConnection.addTransceiver(videoTrack');
+    expect(source).not.toContain('peerConnection.addTransceiver(streamEntry.overviewVideoTrack');
   });
 });
