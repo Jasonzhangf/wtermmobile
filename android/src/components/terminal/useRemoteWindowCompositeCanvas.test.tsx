@@ -113,6 +113,55 @@ describe('useRemoteWindowCompositeCanvas projection owner', () => {
     expect(requestAnimationFrame).not.toHaveBeenCalled();
   });
 
+  it('rearms RVFC after playback events when the initial callback is lost', () => {
+    let frameCallback: ((now: number, metadata: { presentedFrames?: number }) => void) | null = null;
+    let requestCount = 0;
+    const requestVideoFrameCallback = vi.fn((callback: typeof frameCallback) => {
+      frameCallback = callback;
+      requestCount += 1;
+      return requestCount;
+    });
+    const video = document.createElement('video');
+    Object.defineProperties(video, {
+      readyState: { value: 2, configurable: true },
+      videoWidth: { value: 1280, configurable: true },
+      videoHeight: { value: 720, configurable: true },
+    });
+    Object.assign(video, {
+      requestVideoFrameCallback,
+    });
+    const cancelVideoFrameCallback = vi.fn();
+    video.cancelVideoFrameCallback = cancelVideoFrameCallback;
+    const focus = document.createElement('canvas');
+    const context = { drawImage: vi.fn() };
+    focus.getContext = vi.fn(() => context) as unknown as HTMLCanvasElement['getContext'];
+
+    const hook = renderHook(() => useRemoteWindowCompositeCanvas({
+      layout: null,
+      focusedWindow: null,
+      overviewCropVisible: false,
+      receiverMediaStream: { getTracks: () => [] } as unknown as MediaStream,
+      overviewMediaStream: null,
+      videoElementRef: { current: video },
+      overviewVideoElementRef: { current: null },
+      overviewCanvasRef: { current: null },
+      focusDisplayCanvasRef: { current: focus },
+      thumbnailCanvasRefs: { current: new Map() },
+    }));
+
+    expect(requestVideoFrameCallback).toHaveBeenCalledTimes(1);
+    act(() => video.dispatchEvent(new Event('loadeddata')));
+    expect(requestVideoFrameCallback).toHaveBeenCalledTimes(2);
+    expect(cancelVideoFrameCallback).toHaveBeenCalledWith(1);
+    act(() => video.dispatchEvent(new Event('playing')));
+    expect(requestVideoFrameCallback).toHaveBeenCalledTimes(3);
+    expect(cancelVideoFrameCallback).toHaveBeenCalledWith(2);
+    act(() => frameCallback?.(0, { presentedFrames: 1 }));
+    expect(context.drawImage).toHaveBeenCalledWith(video, 0, 0, 1280, 720);
+    hook.unmount();
+    expect(cancelVideoFrameCallback).toHaveBeenCalledWith(4);
+  });
+
   it('reports missing decoded-frame callback instead of starting a fallback draw loop', () => {
     const requestAnimationFrame = vi.spyOn(window, 'requestAnimationFrame');
     const onProjectionError = vi.fn();
