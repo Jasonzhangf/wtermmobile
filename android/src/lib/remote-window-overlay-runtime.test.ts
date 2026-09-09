@@ -139,6 +139,38 @@ describe('remote window overlay runtime', () => {
     });
   });
 
+  it('locks an iTerm2 app window without auto-attaching same-process utility siblings', () => {
+    const started = beginRemoteWindowTargetEnumeration(initialRemoteWindowOverlayState);
+    const primary = {
+      ...makeTarget('app-primary', 'app-window'),
+      videoTarget: {
+        ...makeTarget('app-primary', 'app-window').videoTarget,
+        appBundleId: 'com.googlecode.iterm2',
+        ownerName: 'iTerm2',
+        title: 'Default (tmux)',
+      },
+    };
+    const sibling = {
+      ...makeTarget('app-sibling', 'app-window'),
+      videoTarget: {
+        ...makeTarget('app-sibling', 'app-window').videoTarget,
+        appBundleId: 'com.googlecode.iterm2',
+        ownerName: 'iTerm2',
+        title: 'Profiles',
+        windowId: 'window-2',
+      },
+    };
+    const picker = applyRemoteWindowTargetCatalog(started.state, started.requestEpoch, {
+      requestId: 'rw-siblings',
+      targets: [primary, sibling],
+    });
+
+    const locked = selectRemoteWindowTarget(picker, primary.streamTargetId);
+
+    expect(locked).toMatchObject({ phase: 'targetLocked', target: primary });
+    expect(locked.phase === 'targetLocked' ? locked.target.compositeWindows : undefined).toBeUndefined();
+  });
+
   it('allows a handoff canvas stream to commit when focus startup fails', () => {
     const started = beginRemoteWindowTargetEnumeration(initialRemoteWindowOverlayState);
     const currentTarget = makeTarget('app-1', 'app-window');

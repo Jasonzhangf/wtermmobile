@@ -187,12 +187,13 @@ export function selectRemoteWindowTarget(
       errorMessage: 'Selected remote window target is no longer in the catalog',
     };
   }
-  // 组合推流（background pane）：选 app 窗口时自动带同 app 全部窗口（平铺合成）
-  const compositeTarget = attachSameAppCompositeWindows(target, state.targets);
+  const effectiveTarget = shouldAutoCompositeRemoteWindowTarget(target)
+    ? attachSameAppCompositeWindows(target, state.targets)
+    : target;
   if (state.phase === 'targetLocked') {
     return {
       ...state,
-      target: compositeTarget,
+      target: effectiveTarget,
       streamStarted: false,
       streamStatus: 'idle',
       streamId: undefined,
@@ -203,13 +204,23 @@ export function selectRemoteWindowTarget(
   return {
     phase: 'targetLocked',
     requestEpoch: state.requestEpoch,
-    target: compositeTarget,
+    target: effectiveTarget,
     targets: state.targets,
     mode,
     streamStarted: false,
     streamStatus: 'idle',
     errors: state.errors,
   };
+}
+
+const ITERM2_APP_BUNDLE_ID = 'com.googlecode.iterm2';
+
+/** iTerm2 utility windows (such as Profiles) cannot join a terminal composite. */
+export function shouldAutoCompositeRemoteWindowTarget(
+  target: RemoteWindowStreamTargetManifest,
+): boolean {
+  return target.videoTarget.kind !== 'app-window'
+    || target.videoTarget.appBundleId?.trim() !== ITERM2_APP_BUNDLE_ID;
 }
 
 export function attachSameAppCompositeWindows(
