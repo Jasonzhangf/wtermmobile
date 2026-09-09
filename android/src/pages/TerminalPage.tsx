@@ -35,6 +35,12 @@ import type {
   TerminalSessionDrawerItem,
   TerminalSessionDrawerSlot,
 } from '../lib/plugin-session-drawer/session-drawer-contract';
+import {
+  filterSessionsByDrawerVisibility,
+  normalizeSessionDrawerFilterConfig,
+  resolveSessionNameForVisibility,
+  type SessionDrawerFilterConfig,
+} from '../lib/plugin-session-drawer/session-drawer-visibility';
 import type { ResolveFileBrowserSessionPort, TerminalFileBrowserSlot } from '../lib/plugin-file-browser/file-browser-contract';
 import type {
   RemoteWindowInputContext,
@@ -519,6 +525,7 @@ interface TerminalPageProps {
   shortcutSmartSort?: boolean;
   shortcutFrequencyMap?: Record<string, number>;
   onShortcutUse?: (shortcutId: string) => void;
+  sessionDrawerFilterConfig?: SessionDrawerFilterConfig;
 }
 
 interface ScheduleComposerTarget {
@@ -609,6 +616,7 @@ function TerminalPageComponent({
   shortcutSmartSort,
   shortcutFrequencyMap,
   onShortcutUse,
+  sessionDrawerFilterConfig,
 }: TerminalPageProps) {
   const isAndroid = Capacitor.getPlatform() === 'android';
   const [terminalShellNow, setTerminalShellNow] = useState(() => new Date());
@@ -1193,6 +1201,10 @@ function TerminalPageComponent({
     }
     return buildServerIdentityAliasMap(aliasInputs);
   }, [onlineRelayDaemonDevices]);
+  const resolvedSessionDrawerFilterConfig = useMemo(
+    () => normalizeSessionDrawerFilterConfig(sessionDrawerFilterConfig),
+    [sessionDrawerFilterConfig],
+  );
   const drawerRemoteSessions = useMemo(() => {
     const resolveDrawerIdentity = (input: ServerIdentityInput) => {
       const rawIdentity = resolveServerIdentity(input);
@@ -1391,6 +1403,7 @@ function TerminalPageComponent({
           // 用物理端点（bridgeHost:bridgePort）+ sessionName 作为纯稳定键。
           stableKey,
           title: liveSession?.customName || liveSession?.title || sessionName,
+          sessionName,
           paneLabel: undefined,
           sessionGroupSlot: null,
           active: false,
@@ -1415,6 +1428,7 @@ function TerminalPageComponent({
           id: activeSession.id,
           stableKey: `local:${activeSession.id}::session:${sessionName}`,
           title: activeSession.customName || activeSession.title || sessionName,
+          sessionName,
           subtitle: `${serverIdentity.label} · ${sessionName}${formatTerminalBackendSuffix(activeSession.terminalBackend || 'tmux')}`,
           paneLabel: undefined,
           sessionGroupSlot: resolveSessionGroupSlot(activeSession.id),
@@ -1425,8 +1439,18 @@ function TerminalPageComponent({
         });
       }
     }
-    return { items, targets, closeTargets, catalogLiveSessionIds };
-  }, [activeSession, drawerServerIdentityAliases, onlineDrawerServerIdentityAliases, onlineRelayDaemonDevices, relayDeviceByDaemonHostId, renderedPaneSessions, resolveSessionGroupSlot, sessionGroups, sessions]);
+    return {
+      items: filterSessionsByDrawerVisibility(
+        items,
+        resolvedSessionDrawerFilterConfig,
+        (item) => resolveSessionNameForVisibility(item),
+      ),
+      unfilteredItemCount: items.length,
+      targets,
+      closeTargets,
+      catalogLiveSessionIds,
+    };
+  }, [activeSession, drawerServerIdentityAliases, onlineDrawerServerIdentityAliases, onlineRelayDaemonDevices, relayDeviceByDaemonHostId, renderedPaneSessions, resolveSessionGroupSlot, resolvedSessionDrawerFilterConfig, sessionGroups, sessions]);
   const drawerHosts = useMemo<TerminalSessionDrawerHost[]>(() => {
     const hosts = new Map<string, TerminalSessionDrawerHost>();
     for (const device of onlineRelayDaemonDevices) {
@@ -1508,6 +1532,7 @@ function TerminalPageComponent({
       return {
         ...item,
         title: liveSession.customName || liveSession.title || liveSession.sessionName,
+        sessionName: liveSession.sessionName || item.sessionName,
         subtitle: `${item.hostLabel || item.hostKey || 'unknown server'} · ${liveSession.sessionName}`,
         paneLabel: undefined,
         sessionGroupSlot: resolveSessionGroupSlot(liveSession.id),
@@ -1517,11 +1542,12 @@ function TerminalPageComponent({
     });
 
     const projectedItems = new Map(catalogItems.map((item) => [item.id, item]));
-    if (catalogItems.length === 0 && activeSession && activeSession.state !== 'closed') {
+    if (drawerRemoteSessions.unfilteredItemCount === 0 && activeSession && activeSession.state !== 'closed') {
       projectedItems.set(activeSession.id, {
         id: activeSession.id,
         stableKey: activeSession.id,
         title: activeSession.customName || activeSession.title || activeSession.sessionName,
+        sessionName: activeSession.sessionName,
         subtitle: `${activeSession.connectionName || activeSession.hostId || 'unknown server'} · ${activeSession.sessionName}`,
         sessionGroupSlot: resolveSessionGroupSlot(activeSession.id),
         active: activeSessionIds.has(activeSession.id),
@@ -1531,8 +1557,12 @@ function TerminalPageComponent({
       });
     }
 
-    return [...projectedItems.values()];
-  }, [activeSession, drawerRemoteSessions.items, renderedPaneSessions, resolveSessionGroupSlot, sessions]);
+    return filterSessionsByDrawerVisibility(
+      [...projectedItems.values()],
+      resolvedSessionDrawerFilterConfig,
+      (item) => resolveSessionNameForVisibility(item),
+    );
+  }, [activeSession, drawerRemoteSessions.items, drawerRemoteSessions.unfilteredItemCount, renderedPaneSessions, resolveSessionGroupSlot, resolvedSessionDrawerFilterConfig, sessions]);
   useEffect(() => {
     if (!portraitSessionDrawerEnabled || sessionDrawerOpen || sessions.length > 0 || drawerHosts.length === 0) {
       return;

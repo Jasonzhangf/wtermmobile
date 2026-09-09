@@ -56,6 +56,7 @@ import {
   failRemoteWindowStream,
   initialRemoteWindowOverlayState,
   selectRemoteWindowTarget,
+  shouldAutoCompositeRemoteWindowTarget,
   shrinkRemoteWindowOverlay,
   type RemoteWindowStreamHandoffState,
   type RemoteWindowOverlayState,
@@ -1487,7 +1488,7 @@ export const RemoteWindowOverlayController = memo(function RemoteWindowOverlayCo
   const handleSelectTarget = useCallback((target: RemoteWindowStreamTargetManifest) => {
     const browserMode = browserPickerOpen && isRemoteWindowChromeTarget(target);
     const catalogTargets = 'targets' in state ? state.targets : [];
-    const effectiveTarget = updateFocus
+    const effectiveTarget = updateFocus && shouldAutoCompositeRemoteWindowTarget(target)
       ? attachSameAppCompositeWindows(target, catalogTargets)
       : target;
     const streamRequestEpoch = ++streamRequestEpochRef.current;
