@@ -314,6 +314,36 @@ printf '\\132\\122\\127\\061\\002\\000\\000\\000\\002\\000\\000\\000\\020\\000\\
     expect(captureRuntime).not.toContain("'-e'");
   });
 
+  it('does not signal a recycled process group after capture startup exits', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'rw-capture-exit-'));
+    const captureBinary = join(directory, 'capture');
+    writeFileSync(captureBinary, '#!/bin/sh\nexit 4\n');
+    chmodSync(captureBinary, 0o755);
+    const onError = vi.fn();
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(((pid: number, _signal?: string | number) => {
+      if (typeof pid === 'number' && pid < 0) {
+        const error = Object.assign(new Error('kill EPERM'), { code: 'EPERM' });
+        throw error;
+      }
+      return true;
+    }) as typeof process.kill);
+    try {
+      await expect(startScreenCaptureKitFrameSource(makeTarget(), {
+        frameRate: 30,
+        startupTimeoutMs: 1_000,
+        swiftBinary: '/bin/echo',
+        captureBinary,
+        validateTargets: async () => undefined,
+        onFrame: () => undefined,
+        onError,
+      })).rejects.toThrow('ScreenCaptureKit capture process exited code=4');
+      expect(onError).not.toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('process-group SIGTERM failed') }));
+    } finally {
+      killSpy.mockRestore();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it('keeps a single-window capture config unchanged when no composites', () => {
     const config = buildScreenCaptureKitConfig(makeTarget(), 30);
     expect(config.canvasWidth).toBeUndefined();
