@@ -96,6 +96,39 @@ describe('terminal control runtime input queue', () => {
     expect(spawnSyncMock.mock.calls[0]?.[1]).toEqual(['list-sessions', '-F', '#S']);
   });
 
+  it('enumerates every live tmux socket and records the owning socket for controls', async () => {
+    spawnSyncMock.mockImplementation((_binary: string, args: string[]) => {
+      const socketPath = args[0] === '-S' ? args[1] : 'default';
+      const stdout = socketPath === '/socket-old' ? 'legacy-a\nlegacy-b\n' : 'current\n';
+      return { status: 0, stdout, stderr: '' };
+    });
+    spawnMock.mockImplementation((_binary: string, _args: string[]) => {
+      const child = new EventEmitter() as EventEmitter & {
+        stdout: EventEmitter & { setEncoding: ReturnType<typeof vi.fn> };
+        stderr: EventEmitter & { setEncoding: ReturnType<typeof vi.fn> };
+      };
+      child.stdout = new EventEmitter() as EventEmitter & { setEncoding: ReturnType<typeof vi.fn> };
+      child.stderr = new EventEmitter() as EventEmitter & { setEncoding: ReturnType<typeof vi.fn> };
+      child.stdout.setEncoding = vi.fn();
+      child.stderr.setEncoding = vi.fn();
+      queueMicrotask(() => child.emit('close', 0));
+      return child;
+    });
+    const runtime = createTerminalControlRuntime({
+      tmuxBinary: 'tmux',
+      defaultSessionName: 'demo',
+      hiddenTmuxSessions: new Set(),
+      sanitizeSessionName: (input) => input?.trim() || 'demo',
+      tmuxSocketPaths: () => ['/socket-current', '/socket-old'],
+    });
+
+    expect(runtime.listTmuxSessions()).toEqual(['current', 'legacy-a', 'legacy-b']);
+    await runtime.writeBackendInputGroup('legacy-a', 'echo old', false);
+    expect(spawnMock.mock.calls[0]?.[1]).toEqual([
+      '-S', '/socket-old', 'send-keys', '-t', '=legacy-a:.{top-left}', '-l', '--', 'echo old',
+    ]);
+  });
+
   it('selects the stable daemon socket when the default socket has no server', () => {
     spawnSyncMock
       .mockReturnValueOnce({
