@@ -84,7 +84,7 @@ describe('terminal control runtime input queue', () => {
     spawnSyncMock.mockReturnValue({ status: 0, stdout: '', stderr: '' });
   });
 
-  it('treats tmux 3.6 missing default socket as an empty session list', () => {
+  it('surfaces a missing tmux socket instead of fabricating an empty session list', () => {
     spawnSyncMock.mockReturnValue({
       status: 1,
       stdout: '',
@@ -92,8 +92,36 @@ describe('terminal control runtime input queue', () => {
     });
     const { runtime } = createRuntime();
 
-    expect(runtime.listTmuxSessions()).toEqual([]);
+    expect(() => runtime.listTmuxSessions()).toThrow(/error connecting to/);
     expect(spawnSyncMock.mock.calls[0]?.[1]).toEqual(['list-sessions', '-F', '#S']);
+  });
+
+  it('selects the stable daemon socket when the default socket has no server', () => {
+    spawnSyncMock
+      .mockReturnValueOnce({
+        status: 1,
+        stdout: '',
+        stderr: 'no server running on /private/tmp/tmux-501/default',
+      })
+      .mockReturnValueOnce({
+        status: 1,
+        stdout: '',
+        stderr: 'no server running on /Users/test/.zterm/tmux/tmux-501/default',
+      })
+      .mockReturnValueOnce({ status: 0, stdout: '', stderr: '' })
+      .mockReturnValueOnce({ status: 0, stdout: 'demo\n', stderr: '' });
+    const runtime = createTerminalControlRuntime({
+      tmuxBinary: 'tmux',
+      defaultSessionName: 'demo',
+      hiddenTmuxSessions: new Set(),
+      tmuxSocketDir: '/tmp/zterm-stable-tmux-test',
+      sanitizeSessionName: (input) => input?.trim() || 'demo',
+    });
+
+    runtime.ensureTmuxServerRunning();
+    expect(runtime.listTmuxSessions()).toEqual(['demo']);
+    expect(spawnSyncMock.mock.calls[2]?.[2]?.env?.TMUX_TMPDIR).toBe('/tmp/zterm-stable-tmux-test');
+    expect(spawnSyncMock.mock.calls[3]?.[2]?.env?.TMUX_TMPDIR).toBe('/tmp/zterm-stable-tmux-test');
   });
 
   it('does not hide non-list tmux socket errors as empty sessions', () => {

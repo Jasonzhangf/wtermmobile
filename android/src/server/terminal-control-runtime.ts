@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from 'child_process';
+import { mkdirSync } from 'fs';
 import { homedir } from 'os';
 import {
   TERMINAL_INPUT_CHUNK_BYTES,
@@ -71,6 +72,9 @@ export function buildExactTmuxPaneTarget(sessionName: string) {
 export function createTerminalControlRuntime(
   deps: TerminalControlRuntimeDeps,
 ): TerminalControlRuntime {
+  type TmuxSocketMode = 'default' | 'stable';
+  let tmuxSocketMode: TmuxSocketMode = 'default';
+
   function resolveExternalBackend(kind = deps.defaultBackend || (deps.wezTermBackend ? 'wezterm' : 'tmux')) {
     const effectiveKind = kind === 'tmux' && deps.defaultBackend === 'wezterm' ? 'wezterm' : kind;
     if (effectiveKind === 'tmux') {
@@ -83,7 +87,7 @@ export function createTerminalControlRuntime(
     return backend;
   }
 
-  function cleanEnv(): Record<string, string> {
+  function cleanEnv(socketMode: TmuxSocketMode = tmuxSocketMode): Record<string, string> {
     const env: Record<string, string> = {};
     for (const [key, value] of Object.entries(process.env)) {
       if (value !== undefined) {
@@ -93,6 +97,12 @@ export function createTerminalControlRuntime(
     delete env.TMUX;
     delete env.TMUX_PANE;
     delete env.TMUX_TMPDIR;
+    if (socketMode === 'stable') {
+      if (!deps.tmuxSocketDir) {
+        throw new Error('stable tmux socket directory is not configured');
+      }
+      env.TMUX_TMPDIR = deps.tmuxSocketDir;
+    }
     env.TERM = 'xterm-256color';
     env.LANG = env.LANG || 'en_US.UTF-8';
     env.LC_CTYPE = env.LC_CTYPE || env.LANG;
@@ -105,19 +115,11 @@ export function createTerminalControlRuntime(
     return env;
   }
 
-  function isTmuxNoServerForListSessions(stderr: string, args: string[]) {
-    if (args[0] !== 'list-sessions') {
-      return false;
-    }
-    return stderr.includes('no server running on')
-      || (stderr.includes('error connecting to') && stderr.includes('No such file or directory'));
-  }
-
-  function runTmux(args: string[]) {
+  function runTmuxWithSocketMode(args: string[], socketMode: TmuxSocketMode) {
     const result = spawnSync(deps.tmuxBinary, args, {
       encoding: 'utf-8',
       cwd: process.env.HOME || homedir(),
-      env: cleanEnv(),
+      env: cleanEnv(socketMode),
     });
 
     if (result.error) {
@@ -126,13 +128,14 @@ export function createTerminalControlRuntime(
 
     if (result.status !== 0) {
       const stderr = result.stderr?.trim() || '';
-      if (isTmuxNoServerForListSessions(stderr, args)) {
-        return { ok: true as const, stdout: '' };
-      }
       throw new Error(stderr || `tmux exited with status ${result.status}`);
     }
 
     return { ok: true as const, stdout: result.stdout || '' };
+  }
+
+  function runTmux(args: string[]) {
+    return runTmuxWithSocketMode(args, tmuxSocketMode);
   }
 
   function runCommand(command: string, args: string[]) {
@@ -153,11 +156,11 @@ export function createTerminalControlRuntime(
     return result;
   }
 
-  function runTmuxAsync(args: string[]) {
+  function runTmuxAsyncWithSocketMode(args: string[], socketMode: TmuxSocketMode) {
     return new Promise<{ ok: true; stdout: string }>((resolve, reject) => {
       const child = spawn(deps.tmuxBinary, args, {
         cwd: process.env.HOME || homedir(),
-        env: cleanEnv(),
+        env: cleanEnv(socketMode),
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
@@ -180,10 +183,6 @@ export function createTerminalControlRuntime(
       child.on('close', (code) => {
         if (code !== 0) {
           const trimmedStderr = stderr.trim();
-          if (isTmuxNoServerForListSessions(trimmedStderr, args)) {
-            resolve({ ok: true, stdout: '' });
-            return;
-          }
           reject(new Error(trimmedStderr || `tmux exited with status ${code ?? 'unknown'}`));
           return;
         }
@@ -192,18 +191,34 @@ export function createTerminalControlRuntime(
     });
   }
 
-  // Daemon shares the system-default tmux socket so that sessions created by
-  // the user's interactive `tmux` shell are visible to the client and vice
-  // versa. Using a private socket would hide user sessions and break the
-  // "all sessions visible" requirement.
+  function runTmuxAsync(args: string[]) {
+    return runTmuxAsyncWithSocketMode(args, tmuxSocketMode);
+  }
+
   function ensureTmuxServerRunning() {
     const keepalive = 'zterm-daemon-keepalive';
-    // If server is already running (user's or ours), just ensure keepalive exists
+    // Reuse an already-running interactive tmux server so its live sessions stay
+    // visible. If the default socket is unavailable, daemon-owned tmux uses the
+    // stable ~/.zterm/tmux directory; no session catalog is persisted to disk.
+    try {
+      runTmuxWithSocketMode(['list-sessions'], 'default');
+      tmuxSocketMode = 'default';
+      return;
+    } catch {
+      // No reachable default server; select the stable daemon-owned socket.
+    }
+
+    if (!deps.tmuxSocketDir) {
+      throw new Error('tmux default socket is unavailable and no stable socket directory is configured');
+    }
+    mkdirSync(deps.tmuxSocketDir, { recursive: true });
+    tmuxSocketMode = 'stable';
+
     try {
       runTmux(['has-session', '-t', buildExactTmuxSessionTarget(keepalive)]);
-      return; // server + keepalive alive
+      return;
     } catch {
-      // server or session missing — continue
+      // Stable server or keepalive session is missing; create both below.
     }
     try {
       // tmux 3.6a: start-server alone creates a server that exits immediately
