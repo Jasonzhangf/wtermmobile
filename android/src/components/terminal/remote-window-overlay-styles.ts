@@ -772,7 +772,11 @@ export const styles: Record<string, CSSProperties> = {
     opacity: 0.62,
   },
   videoWindowGroupFloating: {
-    flex: '0 0 auto',
+    // The group owns both the sibling rail and the primary video surface.
+    // It must fill the locked overlay; an auto-sized group collapses the
+    // primary surface to its intrinsic height when the overlay is embedded
+    // in the bottom sheet, leaving the decoded frame outside the visible area.
+    flex: '1 1 auto',
     minWidth: 0,
     minHeight: 0,
     padding: 8,

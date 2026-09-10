@@ -20,6 +20,7 @@ public class MainActivity extends BridgeActivity {
     private static final String TAG = "ZTermMainActivity";
     private static final String PREFS_NAME = "zterm_webview_cache_version";
     private static final String PREF_VERSION_CODE = "versionCode";
+    private boolean webViewCacheUpgradePending;
 
 
     @Override
@@ -30,7 +31,7 @@ public class MainActivity extends BridgeActivity {
         // 默认固定竖屏锁定：不管手机处于什么姿势都不做横竖屏自动切换；
         // 方向切换只由客户端角落转换按钮（ScreenOrientationPlugin.setOrientation）触发
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-        clearWebViewAssetCacheAfterUpgrade();
+        webViewCacheUpgradePending = clearWebViewAssetCacheAfterUpgrade();
         registerPlugin(ImeAnchorPlugin.class);
         registerPlugin(AppUpdatePlugin.class);
         registerPlugin(DeviceClipboardPlugin.class);
@@ -43,6 +44,11 @@ public class MainActivity extends BridgeActivity {
         Log.i(TAG, "onCreate()");
         if (getBridge() != null && getBridge().getWebView() != null) {
             final WebView wv = getBridge().getWebView();
+            if (webViewCacheUpgradePending) {
+                wv.clearCache(true);
+                wv.reload();
+                webViewCacheUpgradePending = false;
+            }
             wv.setOverScrollMode(View.OVER_SCROLL_NEVER);
             wv.setVerticalScrollBarEnabled(false);
             wv.setHorizontalScrollBarEnabled(false);
@@ -86,21 +92,23 @@ public class MainActivity extends BridgeActivity {
         return packageInfo.versionCode;
     }
 
-    private void clearWebViewAssetCacheAfterUpgrade() {
+    private boolean clearWebViewAssetCacheAfterUpgrade() {
         try {
             long currentVersionCode = readCurrentVersionCode();
             SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
             long lastVersionCode = prefs.getLong(PREF_VERSION_CODE, -1L);
             if (lastVersionCode == currentVersionCode) {
-                return;
+                return false;
             }
 
             deleteRecursively(new java.io.File(getCacheDir(), "WebView/Default/HTTP Cache"));
             deleteRecursively(getCodeCacheDir());
             prefs.edit().putLong(PREF_VERSION_CODE, currentVersionCode).apply();
             Log.i(TAG, "cleared WebView asset cache for versionCode=" + currentVersionCode + " previous=" + lastVersionCode);
+            return true;
         } catch (Exception error) {
             Log.e(TAG, "failed to clear WebView asset cache after upgrade", error);
+            return false;
         }
     }
 
