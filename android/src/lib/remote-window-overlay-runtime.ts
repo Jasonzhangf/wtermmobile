@@ -215,6 +215,12 @@ export function selectRemoteWindowTarget(
 
 const ITERM2_APP_BUNDLE_ID = 'com.googlecode.iterm2';
 
+/** iTerm2 is a terminal host; resizing its captured window changes the user's shell geometry. */
+export function canResizeRemoteWindowTarget(target: RemoteWindowStreamTargetManifest): boolean {
+  return target.videoTarget.kind === 'app-window'
+    && target.videoTarget.appBundleId?.trim() !== ITERM2_APP_BUNDLE_ID;
+}
+
 /** iTerm2 utility windows (such as Profiles) cannot join a terminal composite. */
 export function shouldAutoCompositeRemoteWindowTarget(
   target: RemoteWindowStreamTargetManifest,

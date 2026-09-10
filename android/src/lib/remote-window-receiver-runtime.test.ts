@@ -41,10 +41,16 @@ class MockRTCPeerConnection {
   onicecandidate: ((event: RTCPeerConnectionIceEvent) => void) | null = null;
   ontrack: ((event: RTCTrackEvent) => void) | null = null;
   onconnectionstatechange: (() => void) | null = null;
-  addTransceiver = vi.fn();
+  transceivers: Array<{ mid: string | null }> = [];
+  addTransceiver = vi.fn(() => {
+    const transceiver = { mid: null as string | null };
+    this.transceivers.push(transceiver);
+    return transceiver;
+  });
   addIceCandidate = vi.fn(async () => undefined);
   close = vi.fn();
   getStats = vi.fn(async () => new Map());
+  getTransceivers = vi.fn(() => this.transceivers as unknown as RTCRtpTransceiver[]);
 
   constructor(public readonly configuration: RTCConfiguration) {
     MockRTCPeerConnection.instances.push(this);
@@ -85,10 +91,14 @@ class MockRTCPeerConnection {
     } as RTCPeerConnectionIceEvent);
   }
 
-  emitVideoTrack(stream = new MockMediaStream([new MockMediaTrack()])) {
+  emitVideoTrack(stream = new MockMediaStream([new MockMediaTrack()]), mid: string | null = '0') {
+    const transceiverIndex = mid !== null && /^\d+$/.test(mid) ? Number(mid) : 0;
+    const transceiver = this.transceivers[transceiverIndex] ?? { mid: null };
+    transceiver.mid = mid;
     this.ontrack?.({
       track: stream.getTracks()[0],
       streams: [stream],
+      transceiver,
     } as unknown as RTCTrackEvent);
     return stream;
   }
@@ -287,6 +297,207 @@ describe('remote window receiver runtime', () => {
     expect(oldTrack.stop).toHaveBeenCalledTimes(1);
   });
 
+  it('binds v2 tracks by negotiated m-line when receiver-local ids differ from sender ids', async () => {
+    const runtime = createRuntime();
+    const offer: RemoteWindowStreamStartedOfferV2Payload = {
+      requestId: 'rw-v2-cross-endpoint-ids',
+      streamId: 'stream-v2-cross-endpoint-ids',
+      targetId: 'pane-1',
+      mediaPlan: 'single-focus',
+      mediaPlanVersion: 2,
+      offer: { type: 'offer', sdp: 'host-offer' },
+      mediaBindings: [{
+        role: 'focus',
+        epoch: 0,
+        mediaStreamId: 'sender-stream-id',
+        trackId: 'sender-track-id',
+      }],
+      capture: {
+        source: 'ScreenCaptureKit',
+        frameWidth: 640,
+        frameHeight: 360,
+        frameRate: 30,
+        targetKind: 'iterm2-pane',
+      },
+      transport: { kind: 'webrtc-video' },
+    };
+    const sendAnswer = vi.fn();
+    const started = runtime.startStream({
+      streamId: offer.streamId,
+      target: makeTarget(),
+      protocolVersion: 2,
+      sendIceCandidate: vi.fn(),
+      sendAnswer,
+      startRemote: vi.fn(async () => offer),
+    });
+    await flushMicrotasks(20);
+    const peer = MockRTCPeerConnection.instances[0]!;
+    const receiverTrack = new MockMediaTrack();
+    receiverTrack.id = 'receiver-track-id';
+    const receiverStream = new MockMediaStream([receiverTrack]);
+    receiverStream.id = 'receiver-stream-id';
+
+    peer.emitVideoTrack(receiverStream, '0');
+
+    await expect(started).resolves.toMatchObject({
+      streamId: offer.streamId,
+      mediaStream: receiverStream,
+      bindings: [{ lane: 'focus', trackId: 'receiver-track-id' }],
+    });
+    expect(peer.close).not.toHaveBeenCalled();
+    expect(sendAnswer).toHaveBeenCalledWith(expect.objectContaining({
+      requestId: offer.requestId,
+      streamId: offer.streamId,
+      mediaPlanVersion: 2,
+    }));
+  });
+
+  it('fails explicitly when a v2 track has no registered transceiver lane', async () => {
+    const runtime = createRuntime();
+    const offer: RemoteWindowStreamStartedOfferV2Payload = {
+      requestId: 'rw-v2-missing-mid',
+      streamId: 'stream-v2-missing-mid',
+      targetId: 'pane-1',
+      mediaPlan: 'single-focus',
+      mediaPlanVersion: 2,
+      offer: { type: 'offer', sdp: 'host-offer' },
+      mediaBindings: [{
+        role: 'focus',
+        epoch: 0,
+        mediaStreamId: 'sender-stream-id',
+        trackId: 'sender-track-id',
+      }],
+      capture: {
+        source: 'ScreenCaptureKit',
+        frameWidth: 640,
+        frameHeight: 360,
+        frameRate: 30,
+        targetKind: 'iterm2-pane',
+      },
+      transport: { kind: 'webrtc-video' },
+    };
+    const started = runtime.startStream({
+      streamId: offer.streamId,
+      target: makeTarget(),
+      protocolVersion: 2,
+      sendIceCandidate: vi.fn(),
+      sendAnswer: vi.fn(),
+      startRemote: vi.fn(async () => offer),
+    });
+    await flushMicrotasks(20);
+    const peer = MockRTCPeerConnection.instances[0]!;
+    const track = new MockMediaTrack();
+    const stream = new MockMediaStream([track]);
+    peer.ontrack?.({
+      track,
+      streams: [stream],
+    } as unknown as RTCTrackEvent);
+
+    await expect(started).rejects.toThrow('without registered transceiver lane');
+    expect(track.stop).toHaveBeenCalledTimes(1);
+    expect(peer.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('binds v2 tracks when the negotiated mid is an opaque string', async () => {
+    const runtime = createRuntime();
+    const offer: RemoteWindowStreamStartedOfferV2Payload = {
+      requestId: 'rw-v2-opaque-mid',
+      streamId: 'stream-v2-opaque-mid',
+      targetId: 'pane-1',
+      mediaPlan: 'single-focus',
+      mediaPlanVersion: 2,
+      offer: { type: 'offer', sdp: 'host-offer' },
+      mediaBindings: [{
+        role: 'focus',
+        epoch: 0,
+        mediaStreamId: 'sender-stream-id',
+        trackId: 'sender-track-id',
+      }],
+      capture: {
+        source: 'ScreenCaptureKit',
+        frameWidth: 640,
+        frameHeight: 360,
+        frameRate: 30,
+        targetKind: 'iterm2-pane',
+      },
+      transport: { kind: 'webrtc-video' },
+    };
+    const sendAnswer = vi.fn();
+    const started = runtime.startStream({
+      streamId: offer.streamId,
+      target: makeTarget(),
+      protocolVersion: 2,
+      sendIceCandidate: vi.fn(),
+      sendAnswer,
+      startRemote: vi.fn(async () => offer),
+    });
+    await flushMicrotasks(20);
+    const peer = MockRTCPeerConnection.instances[0]!;
+    const receiverTrack = new MockMediaTrack();
+    receiverTrack.id = 'receiver-track-id';
+    const receiverStream = new MockMediaStream([receiverTrack]);
+    receiverStream.id = 'receiver-stream-id';
+
+    peer.emitVideoTrack(receiverStream, 'focus');
+
+    await expect(started).resolves.toMatchObject({
+      streamId: offer.streamId,
+      mediaStream: receiverStream,
+      bindings: [{ lane: 'focus', trackId: 'receiver-track-id' }],
+    });
+    expect(peer.close).not.toHaveBeenCalled();
+    expect(sendAnswer).toHaveBeenCalledWith(expect.objectContaining({
+      requestId: offer.requestId,
+      streamId: offer.streamId,
+      mediaPlanVersion: 2,
+    }));
+  });
+
+  it('binds v2 tracks when the track event exposes a distinct transceiver wrapper', async () => {
+    const runtime = createRuntime();
+    const offer: RemoteWindowStreamStartedOfferV2Payload = {
+      requestId: 'rw-v2-wrapper-mid',
+      streamId: 'stream-v2-wrapper-mid',
+      targetId: 'pane-1',
+      mediaPlan: 'single-focus',
+      mediaPlanVersion: 2,
+      offer: { type: 'offer', sdp: 'host-offer' },
+      mediaBindings: [{
+        role: 'focus',
+        epoch: 0,
+        mediaStreamId: 'sender-stream-id',
+        trackId: 'sender-track-id',
+      }],
+      capture: {
+        source: 'ScreenCaptureKit',
+        frameWidth: 640,
+        frameHeight: 360,
+        frameRate: 30,
+        targetKind: 'iterm2-pane',
+      },
+      transport: { kind: 'webrtc-video' },
+    };
+    const started = runtime.startStream({
+      streamId: offer.streamId,
+      target: makeTarget(),
+      protocolVersion: 2,
+      sendIceCandidate: vi.fn(),
+      sendAnswer: vi.fn(),
+      startRemote: vi.fn(async () => offer),
+    });
+    await flushMicrotasks(20);
+    const peer = MockRTCPeerConnection.instances[0]!;
+    const track = new MockMediaTrack();
+    const stream = new MockMediaStream([track]);
+    peer.ontrack?.({
+      track,
+      streams: [stream],
+      transceiver: { mid: '0' },
+    } as unknown as RTCTrackEvent);
+
+    await expect(started).resolves.toMatchObject({ streamId: offer.streamId });
+  });
+
   it('negotiates focus-only for a single app window', async () => {
     const runtime = createRuntime();
     const appTarget = {
@@ -368,7 +579,7 @@ describe('remote window receiver runtime', () => {
     timeoutHandlers[0]?.();
     const overviewStream = new MockMediaStream([new MockMediaTrack()]);
     overviewStream.id = 'overview';
-    peer.emitVideoTrack(overviewStream);
+    peer.emitVideoTrack(overviewStream, '1');
     await expect(started).resolves.toMatchObject({
       mediaStream: focusStream,
       overviewMediaStream: overviewStream,

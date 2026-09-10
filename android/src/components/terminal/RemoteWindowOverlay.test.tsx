@@ -2826,6 +2826,35 @@ describe('RemoteWindowOverlay', () => {
     });
   });
 
+  it('never resizes an iTerm2 target when entering fullscreen fill', async () => {
+    const target = makeTarget('iterm-app', 'iTerm2', 'app-window');
+    target.videoTarget.appBundleId = 'com.googlecode.iterm2';
+    const resizeTargetWindow = vi.fn();
+    const requestTargets = vi.fn(async () => ({ requestId: 'rw-iterm', targets: [target] }));
+    const startStream = vi.fn(async (_sessionId: string, _target: RemoteWindowStreamTargetManifest, streamId: string) => ({
+      streamId,
+      mediaStream: { id: 'iterm-media' } as MediaStream,
+    }));
+
+    render(
+      <RemoteWindowOverlay
+        activeSessionId="session-1"
+        requestTargets={requestTargets}
+        startStream={startStream}
+        resizeTargetWindow={resizeTargetWindow}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '打开远程窗口' }));
+    await screen.findByTestId('remote-window-target-iterm-app');
+    fireEvent.click(screen.getByTestId('remote-window-target-iterm-app'));
+    await screen.findByTestId('remote-window-video');
+    fireEvent.click(screen.getByRole('button', { name: '全屏远程窗口' }));
+
+    await waitFor(() => expect(screen.getByTestId('remote-window-locked-overlay')).toBeTruthy());
+    expect(resizeTargetWindow).not.toHaveBeenCalled();
+  });
+
   it('requests the same 1080p short-edge resize while embedded preview is active', async () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 844 });
