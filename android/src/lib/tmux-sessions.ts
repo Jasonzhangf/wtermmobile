@@ -42,18 +42,6 @@ interface TmuxControlTransportEntry {
 }
 
 const tmuxControlTransportPool = new Map<string, TmuxControlTransportEntry>();
-// Short-TTL cache for list-sessions results. Opening the session drawer
-// triggers audit + refresh list requests on the same targets; without this
-// cache every open re-issues a network round trip per target (and each target
-// with no reusable session transport pays a fresh traversal connect). The TTL
-// is short so create/rename/kill operations become visible quickly; mutations
-// also invalidate the cache entry explicitly.
-const TMUX_SESSION_LIST_CACHE_TTL_MS = 3000;
-const tmuxSessionListCache = new Map<string, {
-  sessionNames: string[];
-  sessionCatalog?: TerminalSessionCatalogEntry[];
-  at: number;
-}>();
 let tmuxControlIdentitySequence = 0;
 // Shared session-activity notifier for the tmux control channel (legacy,
 // non-mux wire messages also carry daemon-published session-activity facts).
@@ -124,16 +112,6 @@ function buildTmuxControlTransportKey(
       } : null,
     },
     overrideUrl: normalizeString(overrideUrl),
-  });
-}
-
-function buildTmuxSessionListCacheKey(
-  target: BridgeTarget,
-  traversalSettings: TmuxSessionTraversalSettings,
-  overrideUrl?: string,
-) {
-  return JSON.stringify({
-    transport: buildTmuxControlTransportKey(target, traversalSettings, overrideUrl),
   });
 }
 
@@ -414,23 +392,8 @@ export function fetchTmuxSessionCatalog(
   traversalSettings: Pick<BridgeSettings, 'signalUrl' | 'turnServerUrl' | 'turnUsername' | 'turnCredential' | 'transportMode' | 'traversalRelay'>,
   overrideUrl?: string,
 ) {
-  const cacheKey = buildTmuxSessionListCacheKey(target, traversalSettings, overrideUrl);
-  const cached = tmuxSessionListCache.get(cacheKey);
-  if (cached && Date.now() - cached.at < TMUX_SESSION_LIST_CACHE_TTL_MS) {
-    return Promise.resolve({
-      sessionNames: [...cached.sessionNames],
-      sessionCatalog: [...(cached.sessionCatalog || [])],
-    });
-  }
   const message: TerminalMuxTargetClientMessage = { type: 'list-sessions' };
-  return sendTmuxCatalogRequest(target, traversalSettings, message, overrideUrl).then((catalog) => {
-    tmuxSessionListCache.set(cacheKey, {
-      sessionNames: catalog.sessionNames,
-      sessionCatalog: catalog.sessionCatalog,
-      at: Date.now(),
-    });
-    return catalog;
-  });
+  return sendTmuxCatalogRequest(target, traversalSettings, message, overrideUrl);
 }
 
 export function refreshTmuxSessionCatalog(
@@ -438,12 +401,7 @@ export function refreshTmuxSessionCatalog(
   traversalSettings: Pick<BridgeSettings, 'signalUrl' | 'turnServerUrl' | 'turnUsername' | 'turnCredential' | 'transportMode' | 'traversalRelay'>,
   overrideUrl?: string,
 ) {
-  invalidateTmuxSessionListCache(target, traversalSettings, overrideUrl);
   return fetchTmuxSessionCatalog(target, traversalSettings, overrideUrl);
-}
-
-function invalidateTmuxSessionListCache(target: BridgeTarget, traversalSettings: TmuxSessionTraversalSettings, overrideUrl?: string) {
-  tmuxSessionListCache.delete(buildTmuxSessionListCacheKey(target, traversalSettings, overrideUrl));
 }
 
 export function createTmuxSession(
@@ -462,7 +420,6 @@ export function createTmuxSession(
     { type: 'tmux-create-session', payload },
     overrideUrl,
   );
-  invalidateTmuxSessionListCache(target, traversalSettings, overrideUrl);
   return result;
 }
 
@@ -483,7 +440,6 @@ export function renameTmuxSession(
     { type: 'tmux-rename-session', payload },
     overrideUrl,
   );
-  invalidateTmuxSessionListCache(target, traversalSettings, overrideUrl);
   return result;
 }
 
@@ -498,7 +454,6 @@ export function killTmuxSession(
     type: 'tmux-kill-session',
     payload,
   }, overrideUrl);
-  invalidateTmuxSessionListCache(target, traversalSettings, overrideUrl);
   return result;
 }
 
@@ -507,5 +462,4 @@ export function resetTmuxSessionTransportPoolForTests() {
     failTmuxControlTransport(entry, new Error('Reset tmux control transport pool'), true);
   }
   tmuxControlTransportPool.clear();
-  tmuxSessionListCache.clear();
 }

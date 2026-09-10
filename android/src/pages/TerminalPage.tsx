@@ -1222,7 +1222,11 @@ function TerminalPageComponent({
       const sessionNames = [...new Set(
         (device.daemon.sessions || []).map((session) => session.name.trim()).filter(Boolean),
       )].sort((left, right) => left.localeCompare(right));
-      if (!daemonHostId || sessionNames.length === 0) {
+      // A relay snapshot may legitimately have an empty/stale session array.
+      // Keep the online daemon as a refresh target so the drawer immediately
+      // queries the daemon's live catalog instead of treating the snapshot as
+      // the session truth.
+      if (!daemonHostId) {
         return [];
       }
       const directEndpoint = (device.daemon.endpoints || []).find((endpoint) => (
