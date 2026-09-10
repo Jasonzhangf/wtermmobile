@@ -48,6 +48,7 @@ import {
   attachRemoteWindowStreamReceiver,
   beginRemoteWindowStreamHandoff,
   beginRemoteWindowStreamSetup,
+  canResizeRemoteWindowTarget,
   closeRemoteWindowOverlay,
   commitRemoteWindowStreamHandoff,
   enterRemoteWindowFullscreen,
@@ -1000,7 +1001,6 @@ export const RemoteWindowOverlayController = memo(function RemoteWindowOverlayCo
       new Error(streamInvalidation.message || 'remote window stream is no longer active'),
     ));
   }, [currentLockedStreamId, resetQualityApplyState, state.phase, streamInvalidation]);
-
   const publishRemoteWindowInputContext = useCallback(() => {
     if (!inputContext) {
       return;
@@ -1008,7 +1008,6 @@ export const RemoteWindowOverlayController = memo(function RemoteWindowOverlayCo
     lastReportedInputContextKeyRef.current = inputContextKey;
     onInputContextChange?.(inputContext);
   }, [inputContext, inputContextKey, onInputContextChange]);
-
   const handleShrink = useCallback(() => {
     resetFullscreenViewport();
     // 缩回浮窗时强制退出进行中的双流切流（overview-crop-visible 等），
@@ -1025,7 +1024,7 @@ export const RemoteWindowOverlayController = memo(function RemoteWindowOverlayCo
       || (!embedded && state.mode !== 'fullscreen')
       || !activeSessionId
       || !currentLockedStreamId
-      || !currentLockedTarget
+      || !currentLockedTarget || !canResizeRemoteWindowTarget(currentLockedTarget)
       || !resizeTargetWindow
     ) {
       return false;

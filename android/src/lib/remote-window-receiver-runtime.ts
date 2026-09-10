@@ -71,6 +71,7 @@ interface ActiveRemoteWindowReceiverStream {
   trackAttached: boolean;
   overviewTrackAttached: boolean;
   requiredLaneRoles: readonly ('focus' | 'overview')[];
+  laneTransceivers: Map<RTCRtpTransceiver, 'focus' | 'overview'>;
   protocolVersion: 1 | 2;
   mediaBindings: readonly RemoteWindowStreamMediaBinding[];
   playbackBindings: Map<'focus' | 'overview', RemoteWindowPlaybackBinding>;
@@ -270,18 +271,51 @@ export function createRemoteWindowReceiverRuntime(input?: {
       return;
     }
     const eventStream = Array.isArray(event.streams) ? event.streams[0] : undefined;
-    const binding = entry.mediaBindings.find((item) => (
-      item.trackId === event.track.id && item.mediaStreamId === eventStream?.id
-    ));
-    if (entry.protocolVersion === 2 && !binding) {
-      let message = 'Remote window receiver received undeclared media track';
-      try {
-        event.track.stop();
-      } catch (error) {
-        message += `; track cleanup failed: ${error instanceof Error ? error.message : String(error)}`;
+    // Sender and receiver are separate WebRTC endpoints, so track/stream IDs
+    // are local identities and must not be compared across the wire.
+    // The transceiver returned by addTransceiver is the negotiated m-line
+    // identity. Its mid is an opaque remote-controlled string and is not a
+    // lane identifier, so bind by the transceiver object itself.
+    let binding: RemoteWindowStreamMediaBinding | undefined;
+    if (entry.protocolVersion === 2) {
+      let lane = event.transceiver ? entry.laneTransceivers.get(event.transceiver) : undefined;
+      if (!lane && event.transceiver?.mid !== null && event.transceiver?.mid !== undefined) {
+        for (const [registeredTransceiver, registeredLane] of entry.laneTransceivers) {
+          if (registeredTransceiver.mid === event.transceiver.mid) {
+            lane = registeredLane;
+            break;
+          }
+        }
       }
-      cleanupEntry(entry, message);
-      return;
+      if (!lane && event.transceiver) {
+        const negotiatedTransceivers = entry.peerConnection.getTransceivers?.() ?? [];
+        const transceiverIndex = negotiatedTransceivers.findIndex((transceiver) => (
+          transceiver === event.transceiver
+          || (
+            event.transceiver?.mid !== null
+            && event.transceiver?.mid !== undefined
+            && transceiver.mid === event.transceiver.mid
+          )
+        ));
+        lane = transceiverIndex >= 0 ? entry.requiredLaneRoles[transceiverIndex] : undefined;
+        if (!lane && typeof event.transceiver.mid === 'string' && /^\d+$/.test(event.transceiver.mid)) {
+          const mLineIndex = Number(event.transceiver.mid);
+          if (Number.isSafeInteger(mLineIndex) && mLineIndex >= 0) {
+            lane = entry.requiredLaneRoles[mLineIndex];
+          }
+        }
+      }
+      binding = lane ? entry.mediaBindings.find((item) => item.role === lane) : undefined;
+      if (!binding) {
+        let message = 'Remote window receiver received media track without registered transceiver lane';
+        try {
+          event.track.stop();
+        } catch (error) {
+          message += `; track cleanup failed: ${error instanceof Error ? error.message : String(error)}`;
+        }
+        cleanupEntry(entry, message);
+        return;
+      }
     }
     // V1 remains an explicit legacy adapter; product V2 never infers role.
     const isOverview = entry.protocolVersion === 2
@@ -396,6 +430,7 @@ export function createRemoteWindowReceiverRuntime(input?: {
         trackAttached: false,
         overviewTrackAttached: false,
         requiredLaneRoles: mediaPlanContract.lanes.map((lane) => lane.role),
+        laneTransceivers: new Map(),
         protocolVersion: options.protocolVersion ?? 1,
         mediaBindings: [],
         playbackBindings: new Map(),
@@ -422,7 +457,8 @@ export function createRemoteWindowReceiverRuntime(input?: {
       try {
         // 双流：组合 target 协商两个 video transceiver（focus + overview）
         for (const lane of mediaPlanContract.lanes) {
-          peerConnection.addTransceiver('video', { direction: 'recvonly' });
+          const transceiver = peerConnection.addTransceiver('video', { direction: 'recvonly' });
+          entry.laneTransceivers.set(transceiver, lane.role);
           if (!lane.requiredForStart) {
             throw new Error(`Remote window media lane is not start-gated: ${lane.role}`);
           }

@@ -61,6 +61,24 @@ function clickPayload(overrides: Partial<RemoteWindowInputEventPayload> = {}): R
 }
 
 describe('remote window input policy owner', () => {
+  it('rejects window resize for iTerm2 targets so streaming cannot change shell geometry', () => {
+    const itermTarget = {
+      ...target,
+      videoTarget: {
+        ...target.videoTarget,
+        appBundleId: 'com.googlecode.iterm2',
+      },
+    };
+    expect(() => validateRemoteWindowInputPayload({
+      ...clickPayload({ targetId: itermTarget.streamTargetId }),
+      event: { kind: 'window-resize', width: 1080, height: 1920 },
+    }, {
+      targetId: itermTarget.streamTargetId,
+      target: itermTarget,
+      canvasLayout: null,
+    })).toThrow('resize is disabled for iTerm2 targets');
+  });
+
   it('accepts explicit sample metadata and rejects sample/action mixing', () => {
     expect(() => validateRemoteWindowInputPayload({
       ...clickPayload(),
