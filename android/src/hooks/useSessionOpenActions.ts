@@ -180,7 +180,7 @@ export interface SessionOpenActionsResult {
   }) => void;
   handleSelectCleanSession: (target: BridgeTarget) => void;
   handleRemoteSessionsRefreshed: (target: BridgeTarget, sessionNames: string[], catalog?: TerminalSessionCatalog, auditReason?: OpenTabAuditReason) => void;
-  handleRefreshDrawerHostSessions: (hostKey?: string) => Promise<void>;
+  handleRefreshDrawerHostSessions: (hostKey?: string) => Promise<TerminalSessionCatalog | null | undefined>;
   handleForceRelaySession: (sessionId: string) => void;
   handleUseAutoSession: (sessionId: string) => void;
   handleUseWebSocketSession: (sessionId: string) => void;
@@ -1198,6 +1198,7 @@ export function useSessionOpenActions(options: UseSessionOpenActionsOptions): Se
     const discoveryTarget = normalizeBridgeTarget({ ...target, terminalBackend: undefined });
     const catalog = await queryRemoteSessionCatalogForTarget(discoveryTarget);
     handleRemoteSessionsRefreshed(discoveryTarget, catalog?.sessionNames ?? [], catalog ?? undefined, 'drawer-open');
+    return catalog;
   }, [
     handleRemoteSessionsRefreshed,
     queryRemoteSessionCatalogForTarget,
