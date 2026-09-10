@@ -67,6 +67,7 @@ export function useRemoteWindowPlayback({
   const [liveDiagnostics, setLiveDiagnostics] = useState<RemoteWindowLiveDiagnostics | null>(null);
   const [videoDebugSnapshot, setVideoDebugSnapshot] = useState<RemoteWindowVideoDebugSnapshot | null>(null);
   const frameCallbackRef = useRef<{ video: HTMLVideoElement; callbackId: number } | null>(null);
+  const decodedFrameSubscribersRef = useRef(new Set<(frame: { video: HTMLVideoElement; presentedFrames?: number }) => void>());
   const decodedFrameIdRef = useRef(0);
   const playbackEpochRef = useRef(0);
   const playbackBindingRef = useRef<{
@@ -179,11 +180,12 @@ export function useRemoteWindowPlayback({
     epoch: number,
     boundTrack: MediaStreamTrack | null = null,
   ) => {
-    const video = videoElementRef.current;
-    if (!video) {
+    const videoElement = videoElementRef.current;
+    if (!videoElement) {
       publishDebugSnapshot('play-missing-video');
       return;
     }
+    const video = videoElement;
     video.autoplay = true;
     video.muted = true;
     video.defaultMuted = true;
@@ -201,10 +203,28 @@ export function useRemoteWindowPlayback({
     if (typeof requestFrame === 'function' && !frameCallbackRef.current) {
       let lastFrameWidth = 0;
       let lastFrameHeight = 0;
-      const onVideoFrame = () => {
+      function scheduleNextFrame() {
         if (!isCurrentPlayback(video, stream, track, epoch)) return;
+        const nextRequestFrame = (video as HTMLVideoElement & {
+          requestVideoFrameCallback?: (callback: (now: number, metadata: unknown) => void) => number;
+        }).requestVideoFrameCallback;
+        if (typeof nextRequestFrame === 'function') {
+          frameCallbackRef.current = {
+            video,
+            callbackId: nextRequestFrame.call(video, onVideoFrame),
+          };
+        } else {
+          frameCallbackRef.current = null;
+        }
+      }
+      function onVideoFrame(_now: number, metadata: unknown) {
+        if (!isCurrentPlayback(video, stream, track, epoch)) return;
+        if (frameCallbackRef.current?.video === video) {
+          frameCallbackRef.current = null;
+        }
         const width = video.videoWidth;
         const height = video.videoHeight;
+        const decodedFrameValid = video.readyState >= 2 && width > 0 && height > 0;
         if (width > 0 && height > 0 && (width !== lastFrameWidth || height !== lastFrameHeight)) {
           lastFrameWidth = width;
           lastFrameHeight = height;
@@ -223,6 +243,13 @@ export function useRemoteWindowPlayback({
             commitDecodedFrame(commit);
           }
         }
+        if (decodedFrameValid) {
+          const presentedFrames = typeof metadata === 'object' && metadata !== null
+            && 'presentedFrames' in metadata && typeof metadata.presentedFrames === 'number'
+            ? metadata.presentedFrames
+            : undefined;
+          decodedFrameSubscribersRef.current.forEach((subscriber) => subscriber({ video, presentedFrames }));
+        }
         if (!isCurrentPlayback(video, stream, track, epoch)) return;
         playbackStatsRef.current.framesReceived += 1;
         playbackStatsRef.current.decodedFirstFrameAt ??= Date.now();
@@ -232,18 +259,8 @@ export function useRemoteWindowPlayback({
         if (received === 1 || received % 60 === 0) {
           publishDebugSnapshot('frame-callback');
         }
-        const nextRequestFrame = (video as HTMLVideoElement & {
-          requestVideoFrameCallback?: (callback: (now: number) => void) => number;
-        }).requestVideoFrameCallback;
-        if (typeof nextRequestFrame === 'function') {
-          frameCallbackRef.current = {
-            video,
-            callbackId: nextRequestFrame.call(video, onVideoFrame),
-          };
-        } else {
-          frameCallbackRef.current = null;
-        }
-      };
+        scheduleNextFrame();
+      }
       frameCallbackRef.current = {
         video,
         callbackId: requestFrame.call(video, onVideoFrame),
@@ -397,12 +414,18 @@ export function useRemoteWindowPlayback({
     return () => window.clearInterval(timer);
   }, [receiverMediaStream, streamId, streamStatus, videoElementRef]);
 
+  const subscribeDecodedFrame = useCallback((callback: (frame: { video: HTMLVideoElement; presentedFrames?: number }) => void) => {
+    decodedFrameSubscribersRef.current.add(callback);
+    return () => decodedFrameSubscribersRef.current.delete(callback);
+  }, []);
+
   return {
     invalidatePlayback,
     liveDiagnostics,
     publishDebugSnapshot,
     requestBoundPlayback,
     restoreRetainedPlayback,
+    subscribeDecodedFrame,
     updateVisibility,
     videoDebugSnapshot,
     videoHasPlayed,

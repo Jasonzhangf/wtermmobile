@@ -439,6 +439,7 @@ export const RemoteWindowOverlayController = memo(function RemoteWindowOverlayCo
     publishDebugSnapshot: publishVideoDebugSnapshot,
     requestBoundPlayback: requestBoundVideoPlayback,
     restoreRetainedPlayback: restoreRetainedReceiverPlayback,
+    subscribeDecodedFrame,
     updateVisibility: updateReceiverVideoVisibility,
     videoDebugSnapshot,
     videoHasPlayed,
@@ -1301,6 +1302,7 @@ export const RemoteWindowOverlayController = memo(function RemoteWindowOverlayCo
     overviewCanvasRef: compositeOverviewCanvasRef,
     focusDisplayCanvasRef,
     thumbnailCanvasRefs: compositeThumbCanvasRefs,
+    subscribeDecodedFrame,
     onProjectionError: handleCanvasProjectionError,
   });
 
