@@ -1224,9 +1224,10 @@ function TerminalPageComponent({
     const relayCatalogGroups: SessionGroupHistory[] = onlineRelayDaemonDevices.flatMap((device) => {
       const daemonHostId = device.daemon.hostId.trim();
       const liveCatalog = liveRelaySessionCatalogs[daemonHostId];
+      const liveTmuxCatalog = liveCatalog?.sessionCatalog.filter((entry) => entry.backend === 'tmux');
       const sessionNames = [...new Set(
         liveCatalog
-          ? liveCatalog.sessionNames.map((name) => name.trim()).filter(Boolean)
+          ? (liveTmuxCatalog || []).map((entry) => entry.name.trim()).filter(Boolean)
           : (device.daemon.sessions || []).map((session) => session.name.trim()).filter(Boolean),
       )].sort((left, right) => left.localeCompare(right));
       // A relay snapshot may legitimately have an empty/stale session array.
@@ -1246,7 +1247,7 @@ function TerminalPageComponent({
       ));
       const sessionCwdByName = Object.fromEntries([
         ...Object.entries(existingGroup?.sessionCwdByName || {}),
-        ...((liveCatalog?.sessionCatalog || device.daemon.sessions || []) as Array<{ name: string; cwd?: string }>)
+        ...((liveTmuxCatalog || device.daemon.sessions || []) as Array<{ name: string; cwd?: string }>)
           .filter((session) => session.name.trim() && session.cwd?.trim())
           .map((session) => [session.name.trim(), session.cwd!.trim()] as const),
       ].filter(([name]) => sessionNames.includes(name)));

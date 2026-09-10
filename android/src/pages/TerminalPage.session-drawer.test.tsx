@@ -1551,8 +1551,11 @@ describe('TerminalPage portrait session drawer', () => {
   it('replaces an empty Relay snapshot with the live daemon catalog after drawer refresh', async () => {
     const anchor = makeSession('anchor');
     const onRefreshRemoteSessions = vi.fn(async () => ({
-      sessionNames: ['live-session'],
-      sessionCatalog: [{ name: 'live-session', backend: 'tmux' as const }],
+      sessionNames: ['live-session', 'live-herdr'],
+      sessionCatalog: [
+        { name: 'live-session', backend: 'tmux' as const },
+        { name: 'live-herdr', backend: 'herdr' as const },
+      ],
     }));
 
     render(
@@ -1585,6 +1588,7 @@ describe('TerminalPage portrait session drawer', () => {
 
     await waitFor(() => expect(onRefreshRemoteSessions).toHaveBeenCalledWith('mac-studio'));
     expect(await screen.findByTestId('terminal-session-drawer-row-remote:daemon:mac-studio::session:live-session')).toBeTruthy();
+    expect(screen.queryByText('live-herdr')).toBeNull();
     expect(screen.getByTestId('terminal-session-drawer-host-mac-studio').textContent).toContain('1');
   });
 
