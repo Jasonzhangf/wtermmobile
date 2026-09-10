@@ -1224,12 +1224,15 @@ function TerminalPageComponent({
     const relayCatalogGroups: SessionGroupHistory[] = onlineRelayDaemonDevices.flatMap((device) => {
       const daemonHostId = device.daemon.hostId.trim();
       const liveCatalog = liveRelaySessionCatalogs[daemonHostId];
-      const liveTmuxCatalog = liveCatalog?.sessionCatalog.filter((entry) => entry.backend === 'tmux');
-      const sessionNames = [...new Set(
-        liveCatalog
-          ? (liveTmuxCatalog || []).map((entry) => entry.name.trim()).filter(Boolean)
-          : (device.daemon.sessions || []).map((session) => session.name.trim()).filter(Boolean),
-      )].sort((left, right) => left.localeCompare(right));
+      // Relay daemon directory entries represent the tmux catalog. Herdr
+      // sessions keep their explicit backend-qualified history path. Older
+      // daemon responses may only carry the legacy `sessions` names, which
+      // are still live tmux names when no qualified catalog was returned.
+      const liveTmuxCatalog = liveCatalog
+        ? (liveCatalog.sessionCatalog.length > 0
+          ? liveCatalog.sessionCatalog.filter((entry) => entry.backend === 'tmux')
+          : liveCatalog.sessionNames.map((name) => ({ name, backend: 'tmux' as const })))
+        : undefined;
       // A relay snapshot may legitimately have an empty/stale session array.
       // Keep the online daemon as a refresh target so the drawer immediately
       // queries the daemon's live catalog instead of treating the snapshot as
@@ -1245,6 +1248,9 @@ function TerminalPageComponent({
         || resolveDrawerIdentity(group).key === daemonHostId
         || (directEndpoint?.host?.trim() === group.bridgeHost.trim() && directEndpoint.port === group.bridgePort)
       ));
+      const sessionNames = [...new Set(
+        (liveTmuxCatalog || device.daemon.sessions || []).map((session) => session.name.trim()).filter(Boolean),
+      )].sort((left, right) => left.localeCompare(right));
       const sessionCwdByName = Object.fromEntries([
         ...Object.entries(existingGroup?.sessionCwdByName || {}),
         ...((liveTmuxCatalog || device.daemon.sessions || []) as Array<{ name: string; cwd?: string }>)

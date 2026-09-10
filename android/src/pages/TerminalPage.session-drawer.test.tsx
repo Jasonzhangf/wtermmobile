@@ -1592,6 +1592,45 @@ describe('TerminalPage portrait session drawer', () => {
     expect(screen.getByTestId('terminal-session-drawer-host-mac-studio').textContent).toContain('1');
   });
 
+  it('keeps legacy live session names visible when the daemon omits qualified catalog rows', async () => {
+    const anchor = makeSession('anchor');
+    const onRefreshRemoteSessions = vi.fn(async () => ({
+      sessionNames: ['legacy-live-session'],
+      sessionCatalog: [],
+    }));
+
+    render(
+      <TerminalPage
+        sessions={[anchor]}
+        activeSession={anchor}
+        sessionGroups={[]}
+        relayDevices={[makeRelayDevice({ sessions: [] })]}
+        onRefreshRemoteSessions={onRefreshRemoteSessions}
+        onSwitchSession={vi.fn()}
+        onMoveSession={vi.fn()}
+        onRenameSession={vi.fn()}
+        onCloseSession={vi.fn()}
+        onOpenConnections={vi.fn()}
+        onOpenQuickTabPicker={vi.fn()}
+        onResize={vi.fn()}
+        onTerminalInput={vi.fn()}
+        onTerminalViewportChange={vi.fn()}
+        quickActions={[]}
+        shortcutActions={[]}
+        sessionDraft=""
+      />,
+    );
+
+    const swipeSurface = document.querySelector('[data-testid^="terminal-swipe-surface-"][data-swipe-enabled="true"]') as HTMLElement | null;
+    expect(swipeSurface).toBeTruthy();
+    fireEvent.touchStart(swipeSurface!, { touches: [{ clientX: 56, clientY: 200 }] });
+    fireEvent.touchMove(swipeSurface!, { touches: [{ clientX: 236, clientY: 206 }], cancelable: true });
+    fireEvent.touchEnd(swipeSurface!, { changedTouches: [{ clientX: 236, clientY: 206 }] });
+
+    await waitFor(() => expect(onRefreshRemoteSessions).toHaveBeenCalledWith('mac-studio'));
+    expect(await screen.findByTestId('terminal-session-drawer-row-remote:daemon:mac-studio::session:legacy-live-session')).toBeTruthy();
+  });
+
   it('does not keep stale Relay snapshot rows after a live refresh', async () => {
     const anchor = makeSession('anchor');
     const onRefreshRemoteSessions = vi.fn(async () => ({
