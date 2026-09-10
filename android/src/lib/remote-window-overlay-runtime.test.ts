@@ -4,6 +4,7 @@ import {
   applyRemoteWindowTargetCatalogSnapshot,
   attachRemoteWindowStreamReceiver,
   attachSameAppCompositeWindows,
+  canResizeRemoteWindowTarget,
   beginRemoteWindowStreamHandoff,
   beginRemoteWindowStreamSetup,
   beginRemoteWindowTargetEnumeration,
@@ -48,6 +49,18 @@ function makeTarget(id: string, kind: 'app-window' | 'iterm2-pane'): RemoteWindo
 }
 
 describe('remote window overlay runtime', () => {
+  it('does not resize iTerm2 targets because their window geometry controls shell size', () => {
+    const itermWindow = {
+      ...makeTarget('iterm-window', 'app-window'),
+      videoTarget: {
+        ...makeTarget('iterm-window', 'app-window').videoTarget,
+        appBundleId: 'com.googlecode.iterm2',
+      },
+    };
+    expect(canResizeRemoteWindowTarget(itermWindow)).toBe(false);
+    expect(canResizeRemoteWindowTarget(makeTarget('textedit', 'app-window'))).toBe(true);
+    expect(canResizeRemoteWindowTarget(makeTarget('iterm-pane', 'iterm2-pane'))).toBe(false);
+  });
   it('opens picker state from a daemon catalog without starting fake video', () => {
     const started = beginRemoteWindowTargetEnumeration(initialRemoteWindowOverlayState);
     const target = makeTarget('app-1', 'app-window');

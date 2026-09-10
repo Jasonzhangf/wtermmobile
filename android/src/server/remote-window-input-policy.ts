@@ -84,6 +84,12 @@ export function validateRemoteWindowInputPayload(
   }
   if (event.kind === 'window-resize') {
     if (
+      context.target.videoTarget.kind !== 'app-window'
+      || context.target.videoTarget.appBundleId?.trim() === 'com.googlecode.iterm2'
+    ) {
+      throw new Error('remote window resize is disabled for iTerm2 targets');
+    }
+    if (
       !Number.isFinite(event.width)
       || !Number.isFinite(event.height)
       || event.width < 120

@@ -9,23 +9,59 @@ afterEach(() => {
 });
 
 describe('useRemoteWindowCompositeCanvas projection owner', () => {
+  it('draws focus from the playback decoded-frame subscription without owning RVFC', () => {
+    const receiver = { getTracks: () => [] } as unknown as MediaStream;
+    const video = document.createElement('video');
+    Object.defineProperties(video, {
+      readyState: { value: 2, configurable: true },
+      videoWidth: { value: 1280, configurable: true },
+      videoHeight: { value: 720, configurable: true },
+    });
+    video.srcObject = receiver;
+    const focus = document.createElement('canvas');
+    const context = { drawImage: vi.fn() };
+    focus.getContext = vi.fn(() => context) as unknown as HTMLCanvasElement['getContext'];
+    let subscriber: ((frame: { video: HTMLVideoElement; presentedFrames?: number }) => void) | null = null;
+
+    renderHook(() => useRemoteWindowCompositeCanvas({
+      layout: null,
+      focusedWindow: null,
+      overviewCropVisible: false,
+      receiverMediaStream: receiver,
+      overviewMediaStream: null,
+      videoElementRef: { current: video },
+      overviewVideoElementRef: { current: null },
+      overviewCanvasRef: { current: null },
+      focusDisplayCanvasRef: { current: focus },
+      thumbnailCanvasRefs: { current: new Map() },
+      subscribeDecodedFrame: (callback) => {
+        subscriber = callback;
+        return () => { subscriber = null; };
+      },
+    }));
+
+    act(() => subscriber?.({ video, presentedFrames: 1 }));
+    expect(context.drawImage).toHaveBeenCalledWith(video, 0, 0, 1280, 720);
+  });
+
   it('draws overview and thumbnails once per decoded frame with cached contexts', () => {
     const requestAnimationFrame = vi.spyOn(window, 'requestAnimationFrame');
     let frameCallback: ((now: number, metadata: { presentedFrames?: number }) => void) | null = null;
-    let callbackId = 0;
+    const receiver = { getTracks: () => [] } as unknown as MediaStream;
     const video = document.createElement('video');
     Object.defineProperties(video, {
       readyState: { value: 2, configurable: true },
       videoWidth: { value: 1920, configurable: true },
       videoHeight: { value: 1080, configurable: true },
     });
-    const requestVideoFrameCallback = vi.fn((callback: typeof frameCallback) => {
-      frameCallback = callback;
-      callbackId += 1;
-      return callbackId;
+    video.srcObject = receiver;
+    Object.assign(video, {
+      requestVideoFrameCallback: vi.fn((callback: typeof frameCallback) => {
+        frameCallback = callback;
+        return 1;
+      }),
+      cancelVideoFrameCallback: vi.fn(),
     });
-    const cancelVideoFrameCallback = vi.fn();
-    Object.assign(video, { requestVideoFrameCallback, cancelVideoFrameCallback });
     const overview = document.createElement('canvas');
     overview.width = 320;
     overview.height = 180;
@@ -37,16 +73,21 @@ describe('useRemoteWindowCompositeCanvas projection owner', () => {
     overview.getContext = vi.fn(() => overviewContext) as unknown as HTMLCanvasElement['getContext'];
     thumbnail.getContext = vi.fn(() => thumbnailContext) as unknown as HTMLCanvasElement['getContext'];
     const slot = { windowId: 'window-1', offsetX: 10, offsetY: 20, width: 800, height: 600 };
+    let unsubscribe: (() => void) | null = null;
     const hook = renderHook(() => useRemoteWindowCompositeCanvas({
       layout: { windows: [slot], canvasWidth: 1920, canvasHeight: 1080 },
       focusedWindow: slot,
       overviewCropVisible: true,
-      receiverMediaStream: { getTracks: () => [] } as unknown as MediaStream,
+      receiverMediaStream: receiver,
       overviewMediaStream: { getTracks: () => [] } as unknown as MediaStream,
       videoElementRef: { current: null },
       overviewVideoElementRef: { current: video },
       overviewCanvasRef: { current: overview },
       thumbnailCanvasRefs: { current: new Map([['window-1', thumbnail]]) },
+      subscribeDecodedFrame: () => {
+        unsubscribe = () => {};
+        return () => { unsubscribe = null; };
+      },
     }));
 
     expect(requestAnimationFrame).not.toHaveBeenCalled();
@@ -67,25 +108,59 @@ describe('useRemoteWindowCompositeCanvas projection owner', () => {
     expect(thumbnail.getContext).toHaveBeenCalledTimes(1);
 
     hook.unmount();
-    expect(cancelVideoFrameCallback).toHaveBeenCalledWith(callbackId);
+    expect(unsubscribe).toBeNull();
   });
 
   it('draws focus once for each unique decoded frame without a display-rAF loop', () => {
-    const requestAnimationFrame = vi.spyOn(window, 'requestAnimationFrame');
-    let frameCallback: ((now: number, metadata: { presentedFrames?: number }) => void) | null = null;
+    const receiver = { getTracks: () => [] } as unknown as MediaStream;
     const video = document.createElement('video');
     Object.defineProperties(video, {
       readyState: { value: 2, configurable: true },
       videoWidth: { value: 1280, configurable: true },
       videoHeight: { value: 720, configurable: true },
     });
-    Object.assign(video, {
-      requestVideoFrameCallback: vi.fn((callback: typeof frameCallback) => {
-        frameCallback = callback;
-        return 1;
-      }),
-      cancelVideoFrameCallback: vi.fn(),
+    video.srcObject = receiver;
+    const focus = document.createElement('canvas');
+    const context = { drawImage: vi.fn() };
+    focus.getContext = vi.fn(() => context) as unknown as HTMLCanvasElement['getContext'];
+    let subscriber: ((frame: { video: HTMLVideoElement; presentedFrames?: number }) => void) | null = null;
+
+    renderHook(() => useRemoteWindowCompositeCanvas({
+      layout: null,
+      focusedWindow: null,
+      overviewCropVisible: false,
+      receiverMediaStream: receiver,
+      overviewMediaStream: null,
+      videoElementRef: { current: video },
+      overviewVideoElementRef: { current: null },
+      overviewCanvasRef: { current: null },
+      focusDisplayCanvasRef: { current: focus },
+      thumbnailCanvasRefs: { current: new Map() },
+      subscribeDecodedFrame: (callback) => {
+        subscriber = callback;
+        return () => { subscriber = null; };
+      },
+    }));
+
+    act(() => subscriber?.({ video, presentedFrames: 4 }));
+    act(() => subscriber?.({ video, presentedFrames: 4 }));
+    act(() => subscriber?.({ video, presentedFrames: 5 }));
+    expect(context.drawImage).toHaveBeenCalledTimes(2);
+    expect(focus.getContext).toHaveBeenCalledTimes(1);
+    expect(focus.width).toBe(1280);
+    expect(focus.height).toBe(720);
+    expect(subscriber).not.toBeNull();
+  });
+
+  it('does not register RVFC when focus drawing is subscribed to playback frames', () => {
+    const video = document.createElement('video');
+    Object.defineProperties(video, {
+      readyState: { value: 2, configurable: true },
+      videoWidth: { value: 1280, configurable: true },
+      videoHeight: { value: 720, configurable: true },
     });
+    const requestVideoFrameCallback = vi.fn();
+    Object.assign(video, { requestVideoFrameCallback });
     const focus = document.createElement('canvas');
     const context = { drawImage: vi.fn() };
     focus.getContext = vi.fn(() => context) as unknown as HTMLCanvasElement['getContext'];
@@ -101,69 +176,13 @@ describe('useRemoteWindowCompositeCanvas projection owner', () => {
       overviewCanvasRef: { current: null },
       focusDisplayCanvasRef: { current: focus },
       thumbnailCanvasRefs: { current: new Map() },
+      subscribeDecodedFrame: () => () => {},
     }));
 
-    act(() => frameCallback?.(0, { presentedFrames: 4 }));
-    act(() => frameCallback?.(1, { presentedFrames: 4 }));
-    act(() => frameCallback?.(2, { presentedFrames: 5 }));
-    expect(context.drawImage).toHaveBeenCalledTimes(2);
-    expect(focus.getContext).toHaveBeenCalledTimes(1);
-    expect(focus.width).toBe(1280);
-    expect(focus.height).toBe(720);
-    expect(requestAnimationFrame).not.toHaveBeenCalled();
+    expect(requestVideoFrameCallback).not.toHaveBeenCalled();
   });
 
-  it('rearms RVFC after playback events when the initial callback is lost', () => {
-    let frameCallback: ((now: number, metadata: { presentedFrames?: number }) => void) | null = null;
-    let requestCount = 0;
-    const requestVideoFrameCallback = vi.fn((callback: typeof frameCallback) => {
-      frameCallback = callback;
-      requestCount += 1;
-      return requestCount;
-    });
-    const video = document.createElement('video');
-    Object.defineProperties(video, {
-      readyState: { value: 2, configurable: true },
-      videoWidth: { value: 1280, configurable: true },
-      videoHeight: { value: 720, configurable: true },
-    });
-    Object.assign(video, {
-      requestVideoFrameCallback,
-    });
-    const cancelVideoFrameCallback = vi.fn();
-    video.cancelVideoFrameCallback = cancelVideoFrameCallback;
-    const focus = document.createElement('canvas');
-    const context = { drawImage: vi.fn() };
-    focus.getContext = vi.fn(() => context) as unknown as HTMLCanvasElement['getContext'];
-
-    const hook = renderHook(() => useRemoteWindowCompositeCanvas({
-      layout: null,
-      focusedWindow: null,
-      overviewCropVisible: false,
-      receiverMediaStream: { getTracks: () => [] } as unknown as MediaStream,
-      overviewMediaStream: null,
-      videoElementRef: { current: video },
-      overviewVideoElementRef: { current: null },
-      overviewCanvasRef: { current: null },
-      focusDisplayCanvasRef: { current: focus },
-      thumbnailCanvasRefs: { current: new Map() },
-    }));
-
-    expect(requestVideoFrameCallback).toHaveBeenCalledTimes(1);
-    act(() => video.dispatchEvent(new Event('loadeddata')));
-    expect(requestVideoFrameCallback).toHaveBeenCalledTimes(2);
-    expect(cancelVideoFrameCallback).toHaveBeenCalledWith(1);
-    act(() => video.dispatchEvent(new Event('playing')));
-    expect(requestVideoFrameCallback).toHaveBeenCalledTimes(3);
-    expect(cancelVideoFrameCallback).toHaveBeenCalledWith(2);
-    act(() => frameCallback?.(0, { presentedFrames: 1 }));
-    expect(context.drawImage).toHaveBeenCalledWith(video, 0, 0, 1280, 720);
-    hook.unmount();
-    expect(cancelVideoFrameCallback).toHaveBeenCalledWith(4);
-  });
-
-  it('reports missing decoded-frame callback instead of starting a fallback draw loop', () => {
-    const requestAnimationFrame = vi.spyOn(window, 'requestAnimationFrame');
+  it('does not report missing decoded-frame callback because playback owns RVFC capability', () => {
     const onProjectionError = vi.fn();
     renderHook(() => useRemoteWindowCompositeCanvas({
       layout: null,
@@ -176,10 +195,10 @@ describe('useRemoteWindowCompositeCanvas projection owner', () => {
       overviewCanvasRef: { current: null },
       focusDisplayCanvasRef: { current: document.createElement('canvas') },
       thumbnailCanvasRefs: { current: new Map() },
+      subscribeDecodedFrame: () => () => {},
       onProjectionError,
     }));
-    expect(onProjectionError).toHaveBeenCalledWith('remote window decoded-frame callback is unavailable');
-    expect(requestAnimationFrame).not.toHaveBeenCalled();
+    expect(onProjectionError).not.toHaveBeenCalled();
   });
 
   it('does not schedule drawing without receiver truth', () => {

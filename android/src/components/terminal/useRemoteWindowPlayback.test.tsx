@@ -166,6 +166,53 @@ describe('useRemoteWindowPlayback owner', () => {
     expect(result.current.videoHasPlayed).toBe(true);
   });
 
+  it('publishes decoded frames only after current playback and dimensions are valid', async () => {
+    const video = document.createElement('video') as HTMLVideoElement & {
+      requestVideoFrameCallback: (callback: (now: number, metadata: unknown) => void) => number;
+    };
+    Object.defineProperties(video, {
+      readyState: { configurable: true, value: 2 },
+      videoWidth: { configurable: true, value: 1280 },
+      videoHeight: { configurable: true, value: 720 },
+    });
+    const frameCallbacks: Array<(now: number, metadata: unknown) => void> = [];
+    video.requestVideoFrameCallback = vi.fn((callback: (now: number, metadata: unknown) => void) => {
+      frameCallbacks.push(callback);
+      return frameCallbacks.length;
+    });
+    video.cancelVideoFrameCallback = vi.fn();
+    video.play = vi.fn(() => new Promise<void>(() => {}));
+    const receiver = stream('decoded-subscription');
+    video.srcObject = receiver;
+    const videoElementRef = { current: video };
+    const overviewVideoElementRef = { current: null };
+    const { result } = renderHook(() => useRemoteWindowPlayback({
+      receiverMediaStream: receiver,
+      overviewMediaStream: null,
+      streamStatus: 'streaming',
+      streamId: receiver.id,
+      videoElementRef,
+      overviewVideoElementRef,
+    }));
+
+    let decodedFrame: { video: HTMLVideoElement; presentedFrames?: number } | null = null;
+    act(() => {
+      result.current.subscribeDecodedFrame((frame) => {
+        decodedFrame = frame;
+      });
+    });
+    await waitFor(() => expect(frameCallbacks.length).toBeGreaterThan(0));
+
+    Object.defineProperty(video, 'readyState', { configurable: true, value: 1 });
+    act(() => frameCallbacks[0]?.(0, { presentedFrames: 1 }));
+    expect(decodedFrame).toBeNull();
+    await waitFor(() => expect(frameCallbacks.length).toBeGreaterThan(2));
+
+    Object.defineProperty(video, 'readyState', { configurable: true, value: 2 });
+    act(() => frameCallbacks[2]?.(1, { presentedFrames: 2 }));
+    expect(decodedFrame).toEqual({ video, presentedFrames: 2 });
+  });
+
   it('keeps visibility false when playback is explicitly invalidated', () => {
     const videoElementRef = { current: null };
     const overviewVideoElementRef = { current: null };
