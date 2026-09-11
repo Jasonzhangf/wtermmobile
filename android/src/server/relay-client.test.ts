@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildRelayDirectoryUpdateEnvelope,
   createRelayHostDirectoryPublishLoop,
+  DIRECTORY_PUBLISH_INTERVAL_MS,
   publishRelayDirectoryUpdate,
 } from './relay-client';
 
@@ -21,6 +22,10 @@ afterEach(() => {
 });
 
 describe('traversal relay daemon directory publisher', () => {
+  it('keeps the daemon relay heartbeat and directory publish cadence at thirty seconds', () => {
+    expect(DIRECTORY_PUBLISH_INTERVAL_MS).toBe(30_000);
+  });
+
   it('builds a directory-update with gateway endpoint candidates and tmux sessions', () => {
     const endpoints = [
       {
