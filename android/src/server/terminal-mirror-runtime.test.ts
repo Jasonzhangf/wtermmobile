@@ -984,6 +984,36 @@ describe('terminal mirror runtime lifecycle truth', () => {
     expectOnlyAdaptiveWidthTmuxMutation(runTmux);
   });
 
+  it('keeps mirror cleanup-failed when adaptive width release mutation fails', async () => {
+    const { runtime, sessions, mirrors, runTmux } = createRuntime();
+    const session = createSession('session-1');
+    sessions.set(session.id, session);
+
+    await runtime.attachTmux(session, {
+      sessionName: 'demo',
+      cols: 70,
+      rows: 40,
+      widthMode: 'adaptive-phone',
+    });
+    runTmux.mockClear();
+    runTmux.mockImplementation((args?: string[]) => {
+      if (args?.[0] === 'set-window-option') {
+        throw new Error('tmux release failed');
+      }
+      return { ok: true as const, stdout: '' };
+    });
+
+    const mirror = mirrors.get('demo')!;
+    const destroyed = runtime.destroyMirror(mirror, 'daemon shutdown');
+
+    expect(destroyed).toBe(false);
+    expect(mirrors.has('demo')).toBe(true);
+    expect(mirror.lifecycle).toBe('failed');
+    expect(mirror.adaptiveWidthAppliedCols).toBe(70);
+    expect(mirror.adaptiveWidthBaselineGeometry).toEqual({ cols: 120, rows: 40 });
+    expect(runTmux).toHaveBeenCalledWith(['set-window-option', '-u', '-t', '=demo', 'window-size']);
+  });
+
   it('does not touch tmux sessions on daemon start for historical adaptive state', () => {
     const { runtime, runTmux } = createRuntime();
     runTmux.mockImplementation((args?: string[]) => {

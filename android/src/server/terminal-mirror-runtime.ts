@@ -83,7 +83,7 @@ export interface TerminalMirrorRuntime {
     mirror: SessionMirror,
     reason: string,
     options?: { closeTransportSubscribers?: boolean; notifyClientClose?: boolean; releaseCode?: string },
-  ) => void;
+  ) => boolean;
   destroyMirrorIfUnsubscribed: (mirror: SessionMirror, reason: string) => boolean;
   ensureSessionReady: (session: TerminalSession, mirror: SessionMirror) => void;
   sendBufferHeadToSession: (session: TerminalSession, mirror: SessionMirror) => void;
@@ -253,16 +253,21 @@ export function createTerminalMirrorRuntime(deps: TerminalMirrorRuntimeDeps): Te
       notifyClientClose?: boolean;
       releaseCode?: string;
     },
-  ) {
+  ): boolean {
     if (mirror.lifecycle === 'destroyed') {
-      return;
+      return false;
     }
 
     // A mirror may be destroyed by shutdown, target failure, or a direct
     // lifecycle cleanup without passing through subscriber detach. Release
     // tmux width ownership before dropping the in-memory lease baseline;
     // otherwise resize-window leaves the shared tmux window in manual mode.
-    clearAdaptiveWidthLeaseAggregate(mirror, `destroy:${reason}`);
+    if (!clearAdaptiveWidthLeaseAggregate(mirror, `destroy:${reason}`)) {
+      console.error(
+        `[${deps.logTimePrefix()}] mirror cleanup blocked: adaptive width release failed for ${mirror.sessionName}; keeping mirror as cleanup-failed`,
+      );
+      return false;
+    }
 
     // R3: drop any pending input items for the dying mirror before subscribers
     // are released or the mirror record is removed. Items already in flight
@@ -309,17 +314,17 @@ export function createTerminalMirrorRuntime(deps: TerminalMirrorRuntimeDeps): Te
     mirror.adaptiveWidthAppliedRows = null;
     stopMirrorLiveSync(mirror);
     mirrors.delete(mirror.key);
+    return true;
   }
 
   function destroyMirrorIfUnsubscribed(mirror: SessionMirror, reason: string) {
     if (mirror.subscribers.size > 0) {
       return false;
     }
-    destroyMirror(mirror, reason, {
+    return destroyMirror(mirror, reason, {
       closeTransportSubscribers: false,
       releaseCode: 'no_subscribers',
     });
-    return true;
   }
 
   function ensureSessionReady(session: TerminalSession, mirror: SessionMirror) {
@@ -632,7 +637,7 @@ export function createTerminalMirrorRuntime(deps: TerminalMirrorRuntimeDeps): Te
     mirror.adaptiveWidthLeaseTimer.unref?.();
   }
 
-  function clearAdaptiveWidthLeaseAggregate(mirror: SessionMirror, reason = 'clear') {
+  function clearAdaptiveWidthLeaseAggregate(mirror: SessionMirror, reason = 'clear'): boolean {
     if (mirror.adaptiveWidthLeaseTimer) {
       clearTimeout(mirror.adaptiveWidthLeaseTimer);
       mirror.adaptiveWidthLeaseTimer = null;
@@ -641,15 +646,19 @@ export function createTerminalMirrorRuntime(deps: TerminalMirrorRuntimeDeps): Te
       try {
         releaseAdaptiveTmuxWidth(mirror, reason);
       } catch (error) {
+        mirror.lifecycle = 'failed';
+        stopMirrorLiveSync(mirror);
         console.error(
           `[${deps.logTimePrefix()}] adaptive width release failed while clearing mirror lease: ${
             error instanceof Error ? error.message : String(error)
           }`,
         );
+        return false;
       }
     }
     mirror.adaptiveWidthAppliedCols = null;
     mirror.adaptiveWidthBaselineGeometry = null;
+    return true;
   }
 
   function readCurrentTmuxGeometry(sessionName: string, backend: 'tmux' | 'herdr' = 'tmux'): TerminalGeometry | null {
@@ -699,6 +708,9 @@ export function createTerminalMirrorRuntime(deps: TerminalMirrorRuntimeDeps): Te
   }
 
   function releaseAdaptiveTmuxWidth(mirror: SessionMirror, reason: string) {
+    if (mirror.backend === 'tmux') {
+      deps.runTmux(['set-window-option', '-u', '-t', deps.buildExactTmuxSessionTarget(mirror.sessionName), 'window-size']);
+    }
     const baseline = mirror.adaptiveWidthBaselineGeometry;
     if (baseline) {
       if (deps.resizeBackendSession) {
@@ -709,9 +721,6 @@ export function createTerminalMirrorRuntime(deps: TerminalMirrorRuntimeDeps): Te
       } else {
         deps.runTmux(['resize-window', '-t', deps.buildExactTmuxSessionTarget(mirror.sessionName), '-x', String(deps.normalizeTerminalCols(baseline.cols))]);
       }
-    }
-    if (mirror.backend === 'tmux') {
-      deps.runTmux(['set-window-option', '-u', '-t', deps.buildExactTmuxSessionTarget(mirror.sessionName), 'window-size']);
     }
     console.log(`[${deps.logTimePrefix()}] adaptive width released`, {
       sessionName: mirror.sessionName,
