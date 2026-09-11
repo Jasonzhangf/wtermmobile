@@ -604,23 +604,10 @@ export function resolveRemoteWindowTouchPointerDownRuntime(options: {
   if (button === 'none') {
     return emptyResult(options.state, false);
   }
-  if (options.zoomedProjection && pointer.pointerType === 'touch') {
-    return withLocalEffect({
-      mode: 'localPan',
-      pointerId: pointer.pointerId,
-      startClientX: pointer.clientX,
-      startClientY: pointer.clientY,
-      startAtMs: pointer.timeMs,
-      lastClientX: pointer.clientX,
-      lastClientY: pointer.clientY,
-      moved: false,
-    }, {
-      kind: 'local-pan-start',
-      pointerId: pointer.pointerId,
-      clientX: pointer.clientX,
-      clientY: pointer.clientY,
-    });
-  }
+  // Direct Touch keeps one-finger semantics identical at fit and zoomed
+  // scale. Local pan is reserved for the committed two-finger zoomed mode;
+  // a zoomed pointer-down must remain pending until movement/hold selects a
+  // remote action.
   return emptyResult({
     mode: 'actionPending',
     pointerId: pointer.pointerId,
