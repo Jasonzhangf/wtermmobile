@@ -437,7 +437,7 @@ describe('buildTraversalPlan', () => {
       )).toThrow('WebRTC mode requires explicit signalUrl and relay daemon target');
   });
 
-  it('prefers relay control-plane ws client url and builds separate rtc-direct and TURN candidates', () => {
+  it('webrtc mode is direct-only and does not build TURN relay candidates', () => {
     const plan = buildTraversalPlan(
       {
         bridgeHost: '100.64.0.10',
@@ -479,18 +479,7 @@ describe('buildTraversalPlan', () => {
       iceTransportPolicy: 'all',
       iceServers: [{ urls: 'stun:claw.codewhisper.cc:3479' }],
     }));
-    expect(plan.candidates).toContainEqual(expect.objectContaining({
-      kind: 'rtc',
-      path: 'rtc-relay',
-      signalUrl: 'ws://159.75.134.56/relay/ws/client?token=access-1&hostId=daemon-host-a&deviceId=tablet-1',
-      endpoint: 'relay:daemon-host-a',
-      iceTransportPolicy: 'relay',
-      iceServers: [{
-        urls: 'turn:claw.codewhisper.cc:3479?transport=udp',
-        username: 'ztermturn',
-        credential: 'turn-pass',
-      }],
-    }));
+    expect(plan.candidates.map((candidate) => candidate.path)).toEqual(['rtc-direct']);
   });
 
   it('uses daemonHostId as the relay host identity for restored open tabs', () => {
