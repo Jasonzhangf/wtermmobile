@@ -1049,6 +1049,68 @@ describe('terminal mirror runtime lifecycle truth', () => {
     expect(runTmux).toHaveBeenCalledWith(['resize-window', '-t', '=demo', '-x', '120']);
   });
 
+  it('blocks mirror creation while retained adaptive width cleanup cannot succeed', async () => {
+    const { runtime, sessions, mirrors, runTmux } = createRuntime();
+    const session = createSession('session-1');
+    sessions.set(session.id, session);
+
+    await runtime.attachTmux(session, {
+      sessionName: 'demo',
+      cols: 70,
+      rows: 40,
+      widthMode: 'adaptive-phone',
+    });
+    runTmux.mockClear();
+    runTmux.mockImplementation((args?: string[]) => {
+      if (args?.[0] === 'set-window-option') {
+        throw new Error('tmux release failed');
+      }
+      return { ok: true as const, stdout: '' };
+    });
+
+    runtime.destroyMirror(mirrors.get('demo')!, 'daemon shutdown');
+
+    expect(() => runtime.createMirror('demo')).toThrow(/adaptive width cleanup pending/);
+  });
+
+  it('does not mutate a same-name replacement target with stale cleanup', async () => {
+    let paneId = '%1';
+    const { runtime, sessions, mirrors, runTmux } = createRuntime({
+      readTmuxPaneMetrics: () => ({
+        paneId,
+        tmuxAvailableLineCountHint: 0,
+        paneRows: 40,
+        paneCols: 120,
+        alternateOn: false,
+      }),
+    });
+    const session = createSession('session-1');
+    sessions.set(session.id, session);
+
+    await runtime.attachTmux(session, {
+      sessionName: 'demo',
+      cols: 70,
+      rows: 40,
+      widthMode: 'adaptive-phone',
+    });
+    runTmux.mockClear();
+    runTmux.mockImplementation((args?: string[]) => {
+      if (args?.[0] === 'set-window-option') {
+        throw new Error('tmux release failed');
+      }
+      return { ok: true as const, stdout: '' };
+    });
+
+    runtime.destroyMirror(mirrors.get('demo')!, 'daemon shutdown');
+    paneId = '%2';
+    runTmux.mockClear();
+    runtime.createMirror('demo');
+
+    expect(mirrors.has('demo')).toBe(true);
+    expect(runTmux).not.toHaveBeenCalledWith(['set-window-option', '-u', '-t', '=demo', 'window-size']);
+    expect(runTmux).not.toHaveBeenCalledWith(['resize-window', '-t', '=demo', '-x', '120']);
+  });
+
   it('does not touch tmux sessions on daemon start for historical adaptive state', () => {
     const { runtime, runTmux } = createRuntime();
     runTmux.mockImplementation((args?: string[]) => {
