@@ -1073,6 +1073,38 @@ describe('terminal mirror runtime lifecycle truth', () => {
     expect(() => runtime.createMirror('demo')).toThrow(/adaptive width cleanup pending/);
   });
 
+  it('keeps attach transactional when retained adaptive width cleanup blocks mirror creation', async () => {
+    const { runtime, sessions, mirrors, runTmux } = createRuntime();
+    const session = createSession('session-1');
+    sessions.set(session.id, session);
+
+    await runtime.attachTmux(session, {
+      sessionName: 'demo',
+      cols: 70,
+      rows: 40,
+      widthMode: 'adaptive-phone',
+    });
+    runTmux.mockClear();
+    runTmux.mockImplementation((args?: string[]) => {
+      if (args?.[0] === 'set-window-option') {
+        throw new Error('tmux release failed');
+      }
+      return { ok: true as const, stdout: '' };
+    });
+
+    runtime.destroyMirror(mirrors.get('demo')!, 'daemon shutdown');
+    runTmux.mockClear();
+    await expect(runtime.attachTmux(session, {
+      sessionName: 'demo',
+      cols: 70,
+      rows: 40,
+      widthMode: 'adaptive-phone',
+    })).rejects.toThrow(/adaptive width cleanup pending/);
+
+    expect(session.mirrorKey).toBeNull();
+    expect(mirrors.has('demo')).toBe(false);
+  });
+
   it('does not mutate a same-name replacement target with stale cleanup', async () => {
     let paneId = '%1';
     const { runtime, sessions, mirrors, runTmux } = createRuntime({
