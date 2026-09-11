@@ -984,7 +984,42 @@ describe('terminal mirror runtime lifecycle truth', () => {
     expectOnlyAdaptiveWidthTmuxMutation(runTmux);
   });
 
-  it('keeps mirror cleanup-failed when adaptive width release mutation fails', async () => {
+  it('still tears down subscribers and retains retry state when adaptive width release mutation fails', async () => {
+    const { runtime, sessions, mirrors, runTmux, sendMessage } = createRuntime();
+    const session = createSession('session-1');
+    sessions.set(session.id, session);
+
+    await runtime.attachTmux(session, {
+      sessionName: 'demo',
+      cols: 70,
+      rows: 40,
+      widthMode: 'adaptive-phone',
+    });
+    runTmux.mockClear();
+    runTmux.mockImplementation((args?: string[]) => {
+      if (args?.[0] === 'set-window-option') {
+        throw new Error('tmux release failed');
+      }
+      return { ok: true as const, stdout: '' };
+    });
+
+    const mirror = mirrors.get('demo')!;
+    const destroyed = runtime.destroyMirror(mirror, 'tmux session killed', {
+      closeTransportSubscribers: false,
+      releaseCode: 'tmux_session_killed',
+    });
+
+    expect(destroyed).toBe(true);
+    expect(mirrors.has('demo')).toBe(false);
+    expect(session.mirrorKey).toBeNull();
+    expect(sendMessage).toHaveBeenCalledWith(session, {
+      type: 'error',
+      payload: { message: 'tmux session killed', code: 'tmux_session_killed' },
+    });
+    expect(runTmux).toHaveBeenCalledWith(['set-window-option', '-u', '-t', '=demo', 'window-size']);
+  });
+
+  it('retries retained adaptive width cleanup before re-creating a mirror', async () => {
     const { runtime, sessions, mirrors, runTmux } = createRuntime();
     const session = createSession('session-1');
     sessions.set(session.id, session);
@@ -1004,14 +1039,14 @@ describe('terminal mirror runtime lifecycle truth', () => {
     });
 
     const mirror = mirrors.get('demo')!;
-    const destroyed = runtime.destroyMirror(mirror, 'daemon shutdown');
+    runtime.destroyMirror(mirror, 'daemon shutdown');
 
-    expect(destroyed).toBe(false);
-    expect(mirrors.has('demo')).toBe(true);
-    expect(mirror.lifecycle).toBe('failed');
-    expect(mirror.adaptiveWidthAppliedCols).toBe(70);
-    expect(mirror.adaptiveWidthBaselineGeometry).toEqual({ cols: 120, rows: 40 });
+    runTmux.mockClear();
+    runTmux.mockReturnValue({ ok: true as const, stdout: '' });
+    runtime.createMirror('demo');
+
     expect(runTmux).toHaveBeenCalledWith(['set-window-option', '-u', '-t', '=demo', 'window-size']);
+    expect(runTmux).toHaveBeenCalledWith(['resize-window', '-t', '=demo', '-x', '120']);
   });
 
   it('does not touch tmux sessions on daemon start for historical adaptive state', () => {
