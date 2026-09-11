@@ -311,6 +311,8 @@ export function createTerminalHttpRuntime(deps: TerminalHttpRuntimeDeps): Termin
         connectedSent: Boolean(subscriber.connectedSent || subscriber.transport?.connectedSent),
         muxChannelId: subscriber.muxChannelId || null,
         requestOrigin: subscriber.transport?.requestOrigin || null,
+        bodySubscribed: subscriber.bodySubscribed !== false,
+        transportReadyState: subscriber.transport?.readyState ?? null,
       })),
       mirrors: mirrorEntries.map((mirror) => ({
         key: mirror.key,

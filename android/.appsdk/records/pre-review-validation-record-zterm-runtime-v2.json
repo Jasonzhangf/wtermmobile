@@ -1,0 +1,34 @@
+{
+  "$schema": "https://appsdk.local/contracts/records/pre-review-validation-record.schema.json",
+  "validation_id": "PRE-9cbefaa29aaa",
+  "issue_id": "zterm-runtime-architecture-v2",
+  "module_id": "zterm-runtime-v2",
+  "fix_candidate_id": "FIX-9cbefaa29aaa",
+  "candidate_commit": "9cbefaa29aaaa57bfd468aa1d65224acca891139",
+  "candidate_tree_hash": "50987e1dbcd4795643d234dde6b83e817a9905ea",
+  "artifact_hash": "sha256:69a6a97eefa7c3474cafb9218424ac67de053827acb72cf53a83d5ea36650330",
+  "whitebox_producer": {
+    "adapter": "zterm::appsdk-lifecycle-adapter",
+    "identity": "zterm-lifecycle-95391-whitebox"
+  },
+  "whitebox_evidence_ids": [
+    "whitebox-9cbefaa29aaa"
+  ],
+  "blackbox_evidence_ids": [
+    "blackbox-9cbefaa29aaa"
+  ],
+  "deployment": {
+    "environment_id": "local-web-95391",
+    "install_receipt_id": "install-9cbefaa29aaa",
+    "restart_receipt_id": "restart-9cbefaa29aaa",
+    "entrypoint": "http://127.0.0.1:4173/",
+    "producer": {
+      "adapter": "zterm::appsdk-lifecycle-adapter",
+      "identity": "zterm-lifecycle-95391"
+    },
+    "observed_at": "2026-09-11T12:11:51.020Z"
+  },
+  "source_unchanged": true,
+  "result": "pass",
+  "created_at": "2026-09-11T12:11:51.040Z"
+}
