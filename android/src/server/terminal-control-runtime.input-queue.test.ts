@@ -84,7 +84,7 @@ describe('terminal control runtime input queue', () => {
     spawnSyncMock.mockReturnValue({ status: 0, stdout: '', stderr: '' });
   });
 
-  it('treats tmux 3.6 missing default socket as an empty session list', () => {
+  it('surfaces a missing tmux socket instead of fabricating an empty session list', () => {
     spawnSyncMock.mockReturnValue({
       status: 1,
       stdout: '',
@@ -92,8 +92,69 @@ describe('terminal control runtime input queue', () => {
     });
     const { runtime } = createRuntime();
 
-    expect(runtime.listTmuxSessions()).toEqual([]);
+    expect(() => runtime.listTmuxSessions()).toThrow(/error connecting to/);
     expect(spawnSyncMock.mock.calls[0]?.[1]).toEqual(['list-sessions', '-F', '#S']);
+  });
+
+  it('enumerates every live tmux socket and records the owning socket for controls', async () => {
+    spawnSyncMock.mockImplementation((_binary: string, args: string[]) => {
+      const socketPath = args[0] === '-S' ? args[1] : 'default';
+      const stdout = socketPath === '/socket-old' ? 'legacy-a\nlegacy-b\n' : 'current\n';
+      return { status: 0, stdout, stderr: '' };
+    });
+    spawnMock.mockImplementation((_binary: string, _args: string[]) => {
+      const child = new EventEmitter() as EventEmitter & {
+        stdout: EventEmitter & { setEncoding: ReturnType<typeof vi.fn> };
+        stderr: EventEmitter & { setEncoding: ReturnType<typeof vi.fn> };
+      };
+      child.stdout = new EventEmitter() as EventEmitter & { setEncoding: ReturnType<typeof vi.fn> };
+      child.stderr = new EventEmitter() as EventEmitter & { setEncoding: ReturnType<typeof vi.fn> };
+      child.stdout.setEncoding = vi.fn();
+      child.stderr.setEncoding = vi.fn();
+      queueMicrotask(() => child.emit('close', 0));
+      return child;
+    });
+    const runtime = createTerminalControlRuntime({
+      tmuxBinary: 'tmux',
+      defaultSessionName: 'demo',
+      hiddenTmuxSessions: new Set(),
+      sanitizeSessionName: (input) => input?.trim() || 'demo',
+      tmuxSocketPaths: () => ['/socket-current', '/socket-old'],
+    });
+
+    expect(runtime.listTmuxSessions()).toEqual(['current', 'legacy-a', 'legacy-b']);
+    await runtime.writeBackendInputGroup('legacy-a', 'echo old', false);
+    expect(spawnMock.mock.calls[0]?.[1]).toEqual([
+      '-S', '/socket-old', 'send-keys', '-t', '=legacy-a:.{top-left}', '-l', '--', 'echo old',
+    ]);
+  });
+
+  it('selects the stable daemon socket when the default socket has no server', () => {
+    spawnSyncMock
+      .mockReturnValueOnce({
+        status: 1,
+        stdout: '',
+        stderr: 'no server running on /private/tmp/tmux-501/default',
+      })
+      .mockReturnValueOnce({
+        status: 1,
+        stdout: '',
+        stderr: 'no server running on /Users/test/.zterm/tmux/tmux-501/default',
+      })
+      .mockReturnValueOnce({ status: 0, stdout: '', stderr: '' })
+      .mockReturnValueOnce({ status: 0, stdout: 'demo\n', stderr: '' });
+    const runtime = createTerminalControlRuntime({
+      tmuxBinary: 'tmux',
+      defaultSessionName: 'demo',
+      hiddenTmuxSessions: new Set(),
+      tmuxSocketDir: '/tmp/zterm-stable-tmux-test',
+      sanitizeSessionName: (input) => input?.trim() || 'demo',
+    });
+
+    runtime.ensureTmuxServerRunning();
+    expect(runtime.listTmuxSessions()).toEqual(['demo']);
+    expect(spawnSyncMock.mock.calls[2]?.[2]?.env?.TMUX_TMPDIR).toBe('/tmp/zterm-stable-tmux-test');
+    expect(spawnSyncMock.mock.calls[3]?.[2]?.env?.TMUX_TMPDIR).toBe('/tmp/zterm-stable-tmux-test');
   });
 
   it('does not hide non-list tmux socket errors as empty sessions', () => {

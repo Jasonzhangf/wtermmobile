@@ -1,5 +1,7 @@
 import { spawn, spawnSync } from 'child_process';
-import { homedir } from 'os';
+import { mkdirSync, readdirSync, statSync } from 'fs';
+import { homedir, tmpdir } from 'os';
+import { join } from 'path';
 import {
   TERMINAL_INPUT_CHUNK_BYTES,
   TERMINAL_INPUT_TMUX_WRITE_CHUNK_BYTES,
@@ -26,11 +28,39 @@ export interface TerminalControlRuntimeDeps {
   defaultSessionName: string;
   hiddenTmuxSessions: Set<string>;
   tmuxSocketDir?: string;
+  tmuxSocketPaths?: () => string[];
   sanitizeSessionName: (input?: string) => string;
   daemonRuntimeDebug?: (scope: string, payload?: unknown) => void;
   wezTermBackend?: TerminalSourceAdapter | null;
   backendRuntimes?: Partial<Record<'herdr' | 'wezterm', TerminalSourceAdapter>>;
   defaultBackend?: TerminalControlBackendKind;
+}
+
+/** Enumerate live tmux sockets without persisting a session catalog. */
+export function discoverTmuxSocketPaths(options: { stableSocketDir?: string; uid?: number } = {}) {
+  const uid = options.uid ?? process.getuid?.();
+  const socketDirName = uid === undefined ? undefined : `tmux-${uid}`;
+  const roots = [process.env.TMUX_TMPDIR, tmpdir(), '/private/tmp', '/tmp', options.stableSocketDir]
+    .filter((root): root is string => Boolean(root));
+  const paths = new Set<string>();
+  for (const root of roots) {
+    const directory = socketDirName ? join(root, socketDirName) : root;
+    let entries: string[];
+    try {
+      entries = socketDirName ? readdirSync(directory) : [];
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const socketPath = join(directory, entry);
+      try {
+        if (statSync(socketPath).isSocket()) paths.add(socketPath);
+      } catch {
+        // Socket may disappear during a live refresh.
+      }
+    }
+  }
+  return [...paths].sort();
 }
 
 export interface TerminalControlRuntime {
@@ -71,6 +101,62 @@ export function buildExactTmuxPaneTarget(sessionName: string) {
 export function createTerminalControlRuntime(
   deps: TerminalControlRuntimeDeps,
 ): TerminalControlRuntime {
+  type TmuxSocketMode = 'default' | 'stable';
+  let tmuxSocketMode: TmuxSocketMode = 'default';
+  let tmuxSocketPathOverride: string | undefined;
+  const sessionSocketPaths = new Map<string, string | undefined>();
+
+  function socketPaths() {
+    return [...new Set((deps.tmuxSocketPaths?.() || []).filter(Boolean))];
+  }
+
+  function runTmuxWithSocketPath(args: string[], socketPath: string) {
+    const result = spawnSync(deps.tmuxBinary, ['-S', socketPath, ...args], {
+      encoding: 'utf-8',
+      cwd: process.env.HOME || homedir(),
+      env: cleanEnv('default'),
+    });
+    if (result.error) throw result.error;
+    if (result.status !== 0) {
+      const stderr = result.stderr?.trim() || '';
+      throw new Error(stderr || `tmux exited with status ${result.status}`);
+    }
+    return { ok: true as const, stdout: result.stdout || '' };
+  }
+
+  function runTmuxAsyncWithSocketPath(args: string[], socketPath: string) {
+    return new Promise<{ ok: true; stdout: string }>((resolve, reject) => {
+      const child = spawn(deps.tmuxBinary, ['-S', socketPath, ...args], {
+        cwd: process.env.HOME || homedir(),
+        env: cleanEnv('default'),
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      child.stdout?.setEncoding('utf8');
+      child.stdout?.on('data', (chunk) => { stdout += chunk; });
+      child.stderr?.setEncoding('utf8');
+      child.stderr?.on('data', (chunk) => { stderr += chunk; });
+      child.on('error', reject);
+      child.on('close', (code) => {
+        if (code !== 0) {
+          reject(new Error(stderr.trim() || `tmux exited with status ${code ?? 'unknown'}`));
+          return;
+        }
+        resolve({ ok: true, stdout });
+      });
+    });
+  }
+
+  function resolveSessionSocketPath(sessionName: string) {
+    return sessionSocketPaths.get(sessionName);
+  }
+
+  function runTmuxForSession(args: string[], sessionName: string) {
+    const socketPath = resolveSessionSocketPath(sessionName);
+    return socketPath ? runTmuxWithSocketPath(args, socketPath) : runTmux(args);
+  }
+
   function resolveExternalBackend(kind = deps.defaultBackend || (deps.wezTermBackend ? 'wezterm' : 'tmux')) {
     const effectiveKind = kind === 'tmux' && deps.defaultBackend === 'wezterm' ? 'wezterm' : kind;
     if (effectiveKind === 'tmux') {
@@ -83,7 +169,7 @@ export function createTerminalControlRuntime(
     return backend;
   }
 
-  function cleanEnv(): Record<string, string> {
+  function cleanEnv(socketMode: TmuxSocketMode = tmuxSocketMode): Record<string, string> {
     const env: Record<string, string> = {};
     for (const [key, value] of Object.entries(process.env)) {
       if (value !== undefined) {
@@ -93,6 +179,12 @@ export function createTerminalControlRuntime(
     delete env.TMUX;
     delete env.TMUX_PANE;
     delete env.TMUX_TMPDIR;
+    if (socketMode === 'stable') {
+      if (!deps.tmuxSocketDir) {
+        throw new Error('stable tmux socket directory is not configured');
+      }
+      env.TMUX_TMPDIR = deps.tmuxSocketDir;
+    }
     env.TERM = 'xterm-256color';
     env.LANG = env.LANG || 'en_US.UTF-8';
     env.LC_CTYPE = env.LC_CTYPE || env.LANG;
@@ -105,19 +197,11 @@ export function createTerminalControlRuntime(
     return env;
   }
 
-  function isTmuxNoServerForListSessions(stderr: string, args: string[]) {
-    if (args[0] !== 'list-sessions') {
-      return false;
-    }
-    return stderr.includes('no server running on')
-      || (stderr.includes('error connecting to') && stderr.includes('No such file or directory'));
-  }
-
-  function runTmux(args: string[]) {
+  function runTmuxWithSocketMode(args: string[], socketMode: TmuxSocketMode) {
     const result = spawnSync(deps.tmuxBinary, args, {
       encoding: 'utf-8',
       cwd: process.env.HOME || homedir(),
-      env: cleanEnv(),
+      env: cleanEnv(socketMode),
     });
 
     if (result.error) {
@@ -126,13 +210,15 @@ export function createTerminalControlRuntime(
 
     if (result.status !== 0) {
       const stderr = result.stderr?.trim() || '';
-      if (isTmuxNoServerForListSessions(stderr, args)) {
-        return { ok: true as const, stdout: '' };
-      }
       throw new Error(stderr || `tmux exited with status ${result.status}`);
     }
 
     return { ok: true as const, stdout: result.stdout || '' };
+  }
+
+  function runTmux(args: string[]) {
+    if (tmuxSocketPathOverride) return runTmuxWithSocketPath(args, tmuxSocketPathOverride);
+    return runTmuxWithSocketMode(args, tmuxSocketMode);
   }
 
   function runCommand(command: string, args: string[]) {
@@ -153,11 +239,11 @@ export function createTerminalControlRuntime(
     return result;
   }
 
-  function runTmuxAsync(args: string[]) {
+  function runTmuxAsyncWithSocketMode(args: string[], socketMode: TmuxSocketMode) {
     return new Promise<{ ok: true; stdout: string }>((resolve, reject) => {
       const child = spawn(deps.tmuxBinary, args, {
         cwd: process.env.HOME || homedir(),
-        env: cleanEnv(),
+        env: cleanEnv(socketMode),
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
@@ -180,10 +266,6 @@ export function createTerminalControlRuntime(
       child.on('close', (code) => {
         if (code !== 0) {
           const trimmedStderr = stderr.trim();
-          if (isTmuxNoServerForListSessions(trimmedStderr, args)) {
-            resolve({ ok: true, stdout: '' });
-            return;
-          }
           reject(new Error(trimmedStderr || `tmux exited with status ${code ?? 'unknown'}`));
           return;
         }
@@ -192,18 +274,47 @@ export function createTerminalControlRuntime(
     });
   }
 
-  // Daemon shares the system-default tmux socket so that sessions created by
-  // the user's interactive `tmux` shell are visible to the client and vice
-  // versa. Using a private socket would hide user sessions and break the
-  // "all sessions visible" requirement.
+  function runTmuxAsync(args: string[]) {
+    if (tmuxSocketPathOverride) return runTmuxAsyncWithSocketPath(args, tmuxSocketPathOverride);
+    return runTmuxAsyncWithSocketMode(args, tmuxSocketMode);
+  }
+
   function ensureTmuxServerRunning() {
     const keepalive = 'zterm-daemon-keepalive';
-    // If server is already running (user's or ours), just ensure keepalive exists
+    // Reuse an already-running interactive tmux server so its live sessions stay
+    // visible. If the default socket is unavailable, daemon-owned tmux uses the
+    // stable ~/.zterm/tmux directory; no session catalog is persisted to disk.
+    try {
+      runTmuxWithSocketMode(['list-sessions'], 'default');
+      tmuxSocketMode = 'default';
+      tmuxSocketPathOverride = undefined;
+      return;
+    } catch {
+      // The default socket may be absent while another live user socket exists.
+      for (const socketPath of socketPaths()) {
+        try {
+          runTmuxWithSocketPath(['list-sessions'], socketPath);
+          tmuxSocketPathOverride = socketPath;
+          return;
+        } catch {
+          // Probe the next live socket.
+        }
+      }
+      // No reachable user server; select the stable daemon-owned socket.
+    }
+
+    if (!deps.tmuxSocketDir) {
+      throw new Error('tmux default socket is unavailable and no stable socket directory is configured');
+    }
+    mkdirSync(deps.tmuxSocketDir, { recursive: true });
+    tmuxSocketMode = 'stable';
+    tmuxSocketPathOverride = undefined;
+
     try {
       runTmux(['has-session', '-t', buildExactTmuxSessionTarget(keepalive)]);
-      return; // server + keepalive alive
+      return;
     } catch {
-      // server or session missing — continue
+      // Stable server or keepalive session is missing; create both below.
     }
     try {
       // tmux 3.6a: start-server alone creates a server that exits immediately
@@ -239,10 +350,20 @@ export function createTerminalControlRuntime(
       const segments = payload.split('\x04');
       for (let index = 0; index < segments.length; index += 1) {
         if (segments[index]) {
-          await runTmuxAsync(['send-keys', '-t', target, '-l', '--', segments[index]!]);
+          const socketPath = resolveSessionSocketPath(sessionName);
+          if (socketPath) {
+            await runTmuxAsyncWithSocketPath(['send-keys', '-t', target, '-l', '--', segments[index]!], socketPath);
+          } else {
+            await runTmuxAsync(['send-keys', '-t', target, '-l', '--', segments[index]!]);
+          }
         }
         if (index < segments.length - 1) {
-          await runTmuxAsync(['send-keys', '-H', '-t', target, '04']);
+          const socketPath = resolveSessionSocketPath(sessionName);
+          if (socketPath) {
+            await runTmuxAsyncWithSocketPath(['send-keys', '-H', '-t', target, '04'], socketPath);
+          } else {
+            await runTmuxAsync(['send-keys', '-H', '-t', target, '04']);
+          }
           await new Promise<void>((resolve) => {
             setTimeout(resolve, TERMINAL_INPUT_TMUX_WRITE_SETTLE_MS);
           });
@@ -250,7 +371,12 @@ export function createTerminalControlRuntime(
       }
     }
     if (appendEnter) {
-      await runTmuxAsync(['send-keys', '-t', target, 'Enter']);
+      const socketPath = resolveSessionSocketPath(sessionName);
+      if (socketPath) {
+        await runTmuxAsyncWithSocketPath(['send-keys', '-t', target, 'Enter'], socketPath);
+      } else {
+        await runTmuxAsync(['send-keys', '-t', target, 'Enter']);
+      }
     }
   }
 
@@ -265,25 +391,59 @@ export function createTerminalControlRuntime(
     if (externalBackend) {
       return externalBackend.listSessions().map((session) => session.sessionName);
     }
-    const result = runTmux(['list-sessions', '-F', '#S']);
-    return result.stdout
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => Boolean(line) && !deps.hiddenTmuxSessions.has(line));
+    sessionSocketPaths.clear();
+    const candidates = socketPaths();
+    const results: Array<{ stdout: string; socketPath?: string }> = [];
+    if (candidates.length === 0) {
+      results.push({ stdout: runTmux(['list-sessions', '-F', '#S']).stdout });
+    } else {
+      for (const socketPath of candidates) {
+        try {
+          results.push({
+            stdout: runTmuxWithSocketPath(['list-sessions', '-F', '#S'], socketPath).stdout,
+            socketPath,
+          });
+        } catch {
+          // A socket may disappear during refresh; continue with remaining live sockets.
+        }
+      }
+      if (results.length === 0) throw new Error('no reachable tmux socket');
+    }
+    const sessions: string[] = [];
+    for (const result of results) {
+      for (const line of result.stdout.split('\n').map((value) => value.trim())) {
+        if (!line || deps.hiddenTmuxSessions.has(line)) continue; // visible iff !deps.hiddenTmuxSessions.has(line)
+        if (!sessionSocketPaths.has(line)) sessionSocketPaths.set(line, result.socketPath);
+        if (!sessions.includes(line)) sessions.push(line);
+      }
+    }
+    return sessions;
   }
 
   function listTerminalSessionCatalog() {
     const entries: TerminalSessionCatalogEntry[] = [];
     const selectedBackend = deps.defaultBackend || (deps.wezTermBackend ? 'wezterm' : 'tmux');
     if (selectedBackend === 'tmux' || selectedBackend === 'wezterm') {
-      const paneResult = selectedBackend === 'tmux'
-        ? runTmux(['list-panes', '-a', '-F', '#{session_name}\t#{pane_current_path}'])
-        : { stdout: '' };
       const cwdBySession = new Map<string, string>();
-      for (const line of paneResult.stdout.split('\n')) {
-        const [sessionName, cwd] = line.split('\t');
-        if (sessionName?.trim() && cwd?.trim() && !cwdBySession.has(sessionName.trim())) {
-          cwdBySession.set(sessionName.trim(), cwd.trim());
+      if (selectedBackend === 'tmux') {
+        const paneSocketPaths = socketPaths();
+        if (paneSocketPaths.length === 0) {
+          paneSocketPaths.push('');
+        }
+        for (const socketPath of paneSocketPaths) {
+          try {
+            const paneResult = socketPath
+              ? runTmuxWithSocketPath(['list-panes', '-a', '-F', '#{session_name}\t#{pane_current_path}'], socketPath)
+              : runTmux(['list-panes', '-a', '-F', '#{session_name}\t#{pane_current_path}']);
+            for (const line of paneResult.stdout.split('\n')) {
+              const [sessionName, cwd] = line.split('\t');
+              if (sessionName?.trim() && cwd?.trim() && !cwdBySession.has(sessionName.trim())) {
+                cwdBySession.set(sessionName.trim(), cwd.trim());
+              }
+            }
+          } catch {
+            // Session names remain authoritative if a socket disappears mid-refresh.
+          }
         }
       }
       for (const sessionName of listTmuxSessions('tmux')) {
@@ -355,7 +515,7 @@ export function createTerminalControlRuntime(
       externalBackend.closeSession(sessionName);
       return;
     }
-    runTmux(['kill-session', '-t', buildExactTmuxSessionTarget(sessionName)]);
+    runTmuxForSession(['kill-session', '-t', buildExactTmuxSessionTarget(sessionName)], sessionName);
   }
 
   function renameTmuxSession(currentName?: string, nextName?: string, backendKind?: TerminalControlBackendKind) {
@@ -374,7 +534,9 @@ export function createTerminalControlRuntime(
     }
     const sessionName = deps.sanitizeSessionName(currentName);
     const nextSessionName = deps.sanitizeSessionName(nextName);
-    runTmux(['rename-session', '-t', buildExactTmuxSessionTarget(sessionName), nextSessionName]);
+    runTmuxForSession(['rename-session', '-t', buildExactTmuxSessionTarget(sessionName), nextSessionName], sessionName);
+    sessionSocketPaths.set(nextSessionName, sessionSocketPaths.get(sessionName));
+    sessionSocketPaths.delete(sessionName);
     return nextSessionName;
   }
 

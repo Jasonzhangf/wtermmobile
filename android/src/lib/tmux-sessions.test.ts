@@ -181,7 +181,7 @@ describe('tmux-sessions transport contract', () => {
     expect(socket.closeCalls).toBe(0);
   });
 
-  it('returns daemon-owned backend truth through fetchTmuxSessionCatalog and shares the list cache', async () => {
+  it('returns daemon-owned backend truth through fetchTmuxSessionCatalog', async () => {
     const { fetchTmuxSessionCatalog, fetchTmuxSessions } = await loadTmuxSessionsModule();
     const promise = fetchTmuxSessionCatalog(target, bridgeSettings);
     const socket = traversalHarness.MockTraversalSocket.latest();
@@ -204,9 +204,10 @@ describe('tmux-sessions transport contract', () => {
       ],
     });
 
-    const cachedNames = fetchTmuxSessions(target, bridgeSettings);
-    await expect(cachedNames).resolves.toEqual(['zterm', 'hd-codex']);
-    expect(socket.sent.filter((item) => item.includes('list-sessions'))).toHaveLength(1);
+    const liveNames = fetchTmuxSessions(target, bridgeSettings);
+    socket.triggerSessions(['zterm', 'hd-codex']);
+    await expect(liveNames).resolves.toEqual(['zterm', 'hd-codex']);
+    expect(socket.sent.filter((item) => item.includes('list-sessions'))).toHaveLength(2);
   });
 
   it('forces a fresh catalog when drawer refresh follows a name-only cached response', async () => {
@@ -365,13 +366,13 @@ describe('tmux-sessions transport contract', () => {
     socket.triggerSessions(['first']);
     await expect(first).resolves.toEqual(['first']);
 
-    // A second list-sessions on the same target within the short-TTL cache
-    // window is served from cache: the open transport is reused (no new
-    // socket) AND no duplicate list-sessions request is sent.
+    // A second list-sessions reuses the physical transport but always queries
+    // the backend again so the catalog remains live.
     const second = fetchTmuxSessions(target, bridgeSettings);
     expect(traversalHarness.MockTraversalSocket.instances).toHaveLength(1);
-    expect(socket.sent.filter((item) => item.includes('list-sessions'))).toHaveLength(1);
-    await expect(second).resolves.toEqual(['first']);
+    expect(socket.sent.filter((item) => item.includes('list-sessions'))).toHaveLength(2);
+    socket.triggerSessions(['second']);
+    await expect(second).resolves.toEqual(['second']);
     expect(socket.closeCalls).toBe(0);
   });
 
@@ -532,12 +533,12 @@ describe('tmux-sessions transport contract', () => {
   });
 });
 
-describe('tmux-sessions list cache', () => {
+describe('tmux-sessions live catalog', () => {
   beforeEach(() => {
     traversalHarness.MockTraversalSocket.reset();
   });
 
-  it('serves repeated list-sessions from a short-TTL cache without re-sending the request', async () => {
+  it('re-requests repeated list-sessions on the reused transport', async () => {
     const { fetchTmuxSessions } = await loadTmuxSessionsModule();
     const first = fetchTmuxSessions(target, bridgeSettings);
     const socket = traversalHarness.MockTraversalSocket.latest();
@@ -547,10 +548,10 @@ describe('tmux-sessions list cache', () => {
     await expect(first).resolves.toEqual(['main', 'logs']);
 
     const second = fetchTmuxSessions(target, bridgeSettings);
-    await expect(second).resolves.toEqual(['main', 'logs']);
-
     const listRequests = socket.sent.filter((item) => item.includes('list-sessions'));
-    expect(listRequests).toHaveLength(1);
+    expect(listRequests).toHaveLength(2);
+    socket.triggerSessions(['main', 'new']);
+    await expect(second).resolves.toEqual(['main', 'new']);
   });
 
   it('uses one daemon-owned list catalog across tmux and Herdr targets', async () => {
@@ -563,35 +564,29 @@ describe('tmux-sessions list cache', () => {
     await expect(tmuxRequest).resolves.toEqual(['tmux-only']);
 
     const unifiedRequest = fetchTmuxSessions({ ...target, terminalBackend: 'herdr' }, bridgeSettings);
-    await expect(unifiedRequest).resolves.toEqual(['tmux-only']);
+    tmuxSocket.triggerSessions(['herdr-live']);
+    await expect(unifiedRequest).resolves.toEqual(['herdr-live']);
   });
 
-  it('re-requests list-sessions after the short-TTL cache expires', async () => {
-    vi.useFakeTimers();
-    try {
-      const { fetchTmuxSessions } = await loadTmuxSessionsModule();
-      const first = fetchTmuxSessions(target, bridgeSettings);
-      const socket = traversalHarness.MockTraversalSocket.latest();
-      socket.triggerOpen();
-      socket.triggerMuxReady();
-      socket.triggerSessions(['main']);
-      await expect(first).resolves.toEqual(['main']);
+  it('returns changed backend sessions on the next request without a TTL', async () => {
+    const { fetchTmuxSessions } = await loadTmuxSessionsModule();
+    const first = fetchTmuxSessions(target, bridgeSettings);
+    const socket = traversalHarness.MockTraversalSocket.latest();
+    socket.triggerOpen();
+    socket.triggerMuxReady();
+    socket.triggerSessions(['main']);
+    await expect(first).resolves.toEqual(['main']);
 
-      await vi.advanceTimersByTimeAsync(3001);
-      const second = fetchTmuxSessions(target, bridgeSettings);
-      const secondSocket = traversalHarness.MockTraversalSocket.latest();
-      expect(secondSocket).toBe(socket);
-      // The TTL expired, so the request is re-issued on the reused transport.
-      expect(socket.sent.filter((item) => item.includes('list-sessions'))).toHaveLength(2);
-      socket.triggerSessions(['main', 'logs']);
-      await expect(second).resolves.toEqual(['main', 'logs']);
-      expect(socket.sent.filter((item) => item.includes('list-sessions'))).toHaveLength(2);
-    } finally {
-      vi.useRealTimers();
-    }
+    const second = fetchTmuxSessions(target, bridgeSettings);
+    const secondSocket = traversalHarness.MockTraversalSocket.latest();
+    expect(secondSocket).toBe(socket);
+    expect(socket.sent.filter((item) => item.includes('list-sessions'))).toHaveLength(2);
+    socket.triggerSessions(['main', 'logs']);
+    await expect(second).resolves.toEqual(['main', 'logs']);
+    expect(socket.sent.filter((item) => item.includes('list-sessions'))).toHaveLength(2);
   });
 
-  it('invalidates the list cache after a create-session mutation succeeds', async () => {
+  it('reflects a create-session mutation in the next live list request', async () => {
     const { createTmuxSession, fetchTmuxSessions } = await loadTmuxSessionsModule();
     const first = fetchTmuxSessions(target, bridgeSettings);
     const socket = traversalHarness.MockTraversalSocket.latest();

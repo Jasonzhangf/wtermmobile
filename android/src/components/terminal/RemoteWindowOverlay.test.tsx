@@ -341,6 +341,7 @@ describe('RemoteWindowOverlay', () => {
     expect(screen.queryByTestId('remote-window-picker')).toBeNull();
     const videoGroup = screen.getByTestId('remote-window-video-window-switcher');
     expect(videoGroup).toBeTruthy();
+    expect((videoGroup as HTMLElement).style.flex).toBe('1 1 auto');
     expect(videoGroup.getAttribute('data-window-group-secondary-placement')).toBe('before');
     expect(videoGroup.firstElementChild?.contains(screen.getByTestId('remote-window-video-window-option-app-child'))).toBe(true);
     expect(videoGroup.lastElementChild?.contains(screen.getByTestId('remote-window-video-surface'))).toBe(true);

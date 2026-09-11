@@ -70,14 +70,13 @@ describe('server control runtime truth gates', () => {
 
   it('keeps tmux/shell control implementations inside dedicated control runtime', () => {
     const source = readControlRuntimeSource();
-    const runBlock = extractBlock(source, 'function runTmux(');
     const backendWriteBlock = extractBlock(source, 'async function writeBackendInputGroup(');
     const sessionsBlock = extractBlock(source, 'function listTmuxSessions(');
 
-    expect(runBlock).toContain("spawnSync(deps.tmuxBinary, args");
-    expect(runBlock).toContain('isTmuxNoServerForListSessions(stderr, args)');
-    expect(source).toContain("stderr.includes('no server running on')");
-    expect(source).toContain("stderr.includes('error connecting to') && stderr.includes('No such file or directory')");
+    expect(source).toContain("spawnSync(deps.tmuxBinary, args");
+    expect(source).toContain('throw new Error(stderr || `tmux exited with status ${result.status}`)');
+    expect(source).toContain("env.TMUX_TMPDIR = deps.tmuxSocketDir");
+    expect(source).toContain("runTmuxWithSocketMode(['list-sessions'], 'default')");
     expect(source).toContain('function buildExactTmuxPaneTarget(sessionName: string)');
     expect(source).toContain(":.{top-left}");
     expect(source).toContain('const target = buildExactTmuxPaneTarget(sessionName)');

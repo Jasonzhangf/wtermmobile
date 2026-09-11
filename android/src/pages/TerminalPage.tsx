@@ -79,6 +79,7 @@ import {
   type ServerIdentityInput,
 } from '../lib/server-identity';
 import { getRelayRtcEndpointCandidates } from '../lib/session-picker';
+import type { TerminalSessionCatalog } from '@zterm/shared/protocol';
 import { buildSessionSemanticOwnerKey, buildSessionSemanticReuseKey } from '../lib/session-semantic-identity';
 import { listOnlineTraversalRelayDaemonDevices } from '../lib/traversal-relay-devices';
 import { ImeAnchor } from '../plugins/ImeAnchorPlugin';
@@ -441,7 +442,7 @@ interface TerminalPageProps {
   onOpenDrawerRemoteSession?: (target: DrawerRemoteSessionTarget, sessionName: string, options?: { activate?: boolean; navigate?: boolean }) => string | null | undefined | void;
   onRenameRemoteSession?: (sessionId: string, nextSessionName: string) => void | Promise<void>;
   onCloseDrawerRemoteSession?: (target: DrawerRemoteSessionTarget, sessionName: string) => void | Promise<void>;
-  onRefreshRemoteSessions?: (hostKey?: string) => void | Promise<void>;
+  onRefreshRemoteSessions?: (hostKey?: string) => void | Promise<void | TerminalSessionCatalog | null>;
   onAuditOpenTabsAgainstRemoteSessions?: (reason: OpenTabAuditReason) => void | Promise<void>;
   relayDevices?: TraversalRelayDeviceSnapshot[];
   serverIdentityAliasInputs?: ServerIdentityInput[];
@@ -663,6 +664,9 @@ function TerminalPageComponent({
     nonce: number;
   } | null>(null);
   const [sessionDrawerOpen, setSessionDrawerOpen] = useState(false);
+  // Live relay catalogs are view state populated by the drawer refresh. They
+  // intentionally do not share the persisted session history resource.
+  const [liveRelaySessionCatalogs, setLiveRelaySessionCatalogs] = useState<Record<string, TerminalSessionCatalog>>({});
   const [drawerCloseDialog, setDrawerCloseDialog] = useState<{
     sessionId: string;
     sessionName: string;
@@ -1219,10 +1223,21 @@ function TerminalPageComponent({
     );
     const relayCatalogGroups: SessionGroupHistory[] = onlineRelayDaemonDevices.flatMap((device) => {
       const daemonHostId = device.daemon.hostId.trim();
-      const sessionNames = [...new Set(
-        (device.daemon.sessions || []).map((session) => session.name.trim()).filter(Boolean),
-      )].sort((left, right) => left.localeCompare(right));
-      if (!daemonHostId || sessionNames.length === 0) {
+      const liveCatalog = liveRelaySessionCatalogs[daemonHostId];
+      // Relay daemon directory entries represent the tmux catalog. Herdr
+      // sessions keep their explicit backend-qualified history path. Older
+      // daemon responses may only carry the legacy `sessions` names, which
+      // are still live tmux names when no qualified catalog was returned.
+      const liveTmuxCatalog = liveCatalog
+        ? (liveCatalog.sessionCatalog.length > 0
+          ? liveCatalog.sessionCatalog.filter((entry) => entry.backend === 'tmux')
+          : liveCatalog.sessionNames.map((name) => ({ name, backend: 'tmux' as const })))
+        : undefined;
+      // A relay snapshot may legitimately have an empty/stale session array.
+      // Keep the online daemon as a refresh target so the drawer immediately
+      // queries the daemon's live catalog instead of treating the snapshot as
+      // the session truth.
+      if (!daemonHostId) {
         return [];
       }
       const directEndpoint = (device.daemon.endpoints || []).find((endpoint) => (
@@ -1233,9 +1248,12 @@ function TerminalPageComponent({
         || resolveDrawerIdentity(group).key === daemonHostId
         || (directEndpoint?.host?.trim() === group.bridgeHost.trim() && directEndpoint.port === group.bridgePort)
       ));
+      const sessionNames = [...new Set(
+        (liveTmuxCatalog || device.daemon.sessions || []).map((session) => session.name.trim()).filter(Boolean),
+      )].sort((left, right) => left.localeCompare(right));
       const sessionCwdByName = Object.fromEntries([
         ...Object.entries(existingGroup?.sessionCwdByName || {}),
-        ...(device.daemon.sessions || [])
+        ...((liveTmuxCatalog || device.daemon.sessions || []) as Array<{ name: string; cwd?: string }>)
           .filter((session) => session.name.trim() && session.cwd?.trim())
           .map((session) => [session.name.trim(), session.cwd!.trim()] as const),
       ].filter(([name]) => sessionNames.includes(name)));
@@ -1450,7 +1468,7 @@ function TerminalPageComponent({
       closeTargets,
       catalogLiveSessionIds,
     };
-  }, [activeSession, drawerServerIdentityAliases, onlineDrawerServerIdentityAliases, onlineRelayDaemonDevices, relayDeviceByDaemonHostId, renderedPaneSessions, resolveSessionGroupSlot, resolvedSessionDrawerFilterConfig, sessionGroups, sessions]);
+  }, [activeSession, drawerServerIdentityAliases, liveRelaySessionCatalogs, onlineDrawerServerIdentityAliases, onlineRelayDaemonDevices, relayDeviceByDaemonHostId, renderedPaneSessions, resolveSessionGroupSlot, resolvedSessionDrawerFilterConfig, sessionGroups, sessions]);
   const drawerHosts = useMemo<TerminalSessionDrawerHost[]>(() => {
     const hosts = new Map<string, TerminalSessionDrawerHost>();
     for (const device of onlineRelayDaemonDevices) {
@@ -1508,7 +1526,12 @@ function TerminalPageComponent({
       drawerOpenDiscoveryFiredRef.current = true;
       void Promise.allSettled(
         hostKeys.map((hostKey) => (
-          Promise.resolve().then(() => onRefreshRemoteSessions(hostKey))
+          Promise.resolve().then(async () => {
+            const refreshed = await onRefreshRemoteSessions(hostKey);
+            if (refreshed && typeof refreshed === 'object' && Array.isArray(refreshed.sessionNames)) {
+              setLiveRelaySessionCatalogs((current) => ({ ...current, [hostKey]: refreshed }));
+            }
+          })
         )),
       ).then((results) => {
         results.forEach((result, index) => {

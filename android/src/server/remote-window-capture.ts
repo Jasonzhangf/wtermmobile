@@ -359,12 +359,16 @@ function stopChildProcess(
   onCleanupError: (error: Error) => void,
 ) {
   const pid = child.pid || 0;
+  // Once the child has exited, its numeric PID may already belong to an
+  // unrelated process group. Never signal that recycled group: doing so can
+  // raise EPERM and replace the capture startup error with a cleanup error.
+  const childRunning = child.exitCode === null && child.signalCode === null;
   try {
     child.kill('SIGTERM');
   } catch (error) {
     onCleanupError(new Error(`ScreenCaptureKit child SIGTERM failed: ${error instanceof Error ? error.message : String(error)}`));
   }
-  if (pid > 0) {
+  if (pid > 0 && childRunning) {
     try {
       // 进程组 SIGTERM——覆盖 capture 派生出的子进程
       process.kill(-pid, 'SIGTERM');
@@ -381,7 +385,7 @@ function stopChildProcess(
     } catch (error) {
       onCleanupError(new Error(`ScreenCaptureKit child SIGKILL failed: ${error instanceof Error ? error.message : String(error)}`));
     }
-    if (pid > 0) {
+    if (pid > 0 && child.exitCode === null && child.signalCode === null) {
       try {
         process.kill(-pid, 'SIGKILL');
       } catch (error) {
