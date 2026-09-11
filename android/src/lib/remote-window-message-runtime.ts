@@ -544,6 +544,14 @@ export function createRemoteWindowMessageRuntime(input?: {
         reliableInputQueue.splice(index, 1);
       }
     }
+    for (const [key, pending] of pendingContinuousInput) {
+      if (pending.payload.streamId === streamId) {
+        pendingContinuousInput.delete(key);
+      }
+    }
+    if (pendingContinuousInput.size === 0) {
+      clearContinuousFlushTimer();
+    }
     if (reliableInputInFlight?.payload.streamId === streamId) {
       clearReliableInputAckTimer();
       reliableInputInFlight = null;
