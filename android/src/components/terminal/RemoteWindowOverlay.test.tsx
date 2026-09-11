@@ -3212,6 +3212,7 @@ describe('RemoteWindowOverlay', () => {
     }));
     sendInput.mockClear();
 
+    const leftBeforeTwoFingerPan = Number.parseFloat(content.style.left || '0');
     fireEvent.pointerDown(surface, { pointerId: 3, pointerType: 'touch', clientX: 100, clientY: 90, button: 0, buttons: 1 });
     fireEvent.pointerDown(surface, { pointerId: 4, pointerType: 'touch', clientX: 150, clientY: 90, button: 0, buttons: 1 });
     fireEvent.pointerMove(surface, { pointerId: 3, pointerType: 'touch', clientX: 120, clientY: 110, button: 0, buttons: 1 });
@@ -3221,6 +3222,7 @@ describe('RemoteWindowOverlay', () => {
 
     await waitFor(() => {
       expect(Number.parseFloat(content.style.width || '0')).toBeGreaterThanOrEqual(fitWidth);
+      expect(Number.parseFloat(content.style.left || '0')).not.toBe(leftBeforeTwoFingerPan);
     });
     expect(screen.queryByTestId('remote-window-minimap')).toBeNull();
     expect(actionRemoteInputPayloads(sendInput).some((payload) => payload.event.kind === 'scroll')).toBe(false);
