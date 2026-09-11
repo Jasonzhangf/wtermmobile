@@ -194,17 +194,17 @@ describe('applySessionActionRuntime', () => {
     });
     const plan = buildTraversalPlan(target, settings, options?.overrideUrl);
     expect(plan.candidates.map((candidate) => candidate.path)).toEqual([
-      'tailscale',
-      'tailscale',
       'rtc-direct',
+      'tailscale',
+      'tailscale',
       'rtc-relay',
     ]);
-    expect(plan.candidates[0]).toMatchObject({
+    expect(plan.candidates[1]).toMatchObject({
       kind: 'ws',
       path: 'tailscale',
       endpoint: '100.66.1.83:3333',
     });
-    expect(plan.candidates[1]).toMatchObject({
+    expect(plan.candidates[2]).toMatchObject({
       kind: 'ws',
       path: 'tailscale',
       endpoint: '100.66.1.82:3333',

@@ -48,7 +48,7 @@ interface RelayDirectoryPublisherSocket {
  * 并用 ping/pong 检测半开连接——超时未收到 pong 则 terminate 触发重连，
  * 服务端对断开连接会在短时间内标 disconnected，客户端按新鲜度过滤即可消除死实例。
  */
-export const DIRECTORY_PUBLISH_INTERVAL_MS = 60_000;
+export const DIRECTORY_PUBLISH_INTERVAL_MS = 30_000;
 
 export interface RelayHostDirectoryPublishLoopOptions {
   socket: { readyState: number; ping: () => void; terminate: () => void };
