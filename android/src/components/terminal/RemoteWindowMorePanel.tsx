@@ -40,7 +40,7 @@ export function RemoteWindowMorePanel({
           onClick={onToggleFullscreenDisplayMode}
           style={styles.headerButton}
         >
-          填满远程窗口
+          重新匹配远端比例
         </button>
       ) : null}
       <label style={styles.moreField}>

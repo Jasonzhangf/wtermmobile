@@ -3,6 +3,7 @@ import {
   createRemoteWindowMessageRuntime,
   isRemoteWindowControlMessage,
   REMOTE_WINDOW_INPUT_RELIABLE_ACK_TIMEOUT_MS,
+  REMOTE_WINDOW_INPUT_SMOOTH_FLUSH_INTERVAL_MS,
   REMOTE_WINDOW_STREAM_START_REQUEST_TIMEOUT_MS,
   REMOTE_WINDOW_TARGETS_REQUEST_TIMEOUT_MS,
 } from './remote-window-message-runtime';
@@ -798,6 +799,74 @@ describe('remote window message runtime', () => {
     expect(sent.payload).not.toHaveProperty('clientSentAt');
   });
 
+  it('drops stopped-stream continuous samples without starving another stream', async () => {
+    const sendSocketPayload = vi.fn();
+    const timers: Array<{ callback: () => void; delay: number }> = [];
+    const runtime = createRemoteWindowMessageRuntime({
+      now: () => 110,
+      setTimeoutFn: vi.fn((callback: () => void, delay: number) => {
+        timers.push({ callback, delay });
+        return timers.length;
+      }) as any,
+      clearTimeoutFn: vi.fn() as any,
+    });
+    const ws = makeSocket();
+    const sendScroll = (streamId: string) => runtime.sendInputEvent('session-1', {
+      ws,
+      payload: {
+        streamId,
+        targetId: `${streamId}-target`,
+        event: {
+          kind: 'scroll',
+          unit: 'pixel',
+          deltaX: 0,
+          deltaY: 4,
+          x: 10,
+          y: 20,
+          normalizedX: 0.1,
+          normalizedY: 0.2,
+          moveCursor: false,
+        },
+      },
+      sendSocketPayload,
+    });
+
+    sendScroll('stream-stopped');
+    sendScroll('stream-kept');
+    const stopRequest = runtime.stopStream('session-1', {
+      ws,
+      streamId: 'stream-stopped',
+      purpose: 'focus',
+      sendSocketPayload,
+    });
+    const stopCall = sendSocketPayload.mock.calls.find((call) => {
+      const message = JSON.parse(call[2] as string);
+      return message.type === 'remote-window-stream-stop-request';
+    });
+    expect(stopCall).toBeTruthy();
+    const stopPayload = JSON.parse(stopCall![2] as string);
+    expect(stopPayload.type).toBe('remote-window-stream-stop-request');
+    const stopRequestId = stopPayload.payload.requestId;
+    runtime.dispatch({
+      type: 'remote-window-stream-status',
+      payload: {
+        requestId: stopRequestId,
+        streamId: 'stream-stopped',
+        purpose: 'focus',
+        phase: 'stopped',
+      },
+    });
+    await expect(stopRequest).resolves.toMatchObject({ streamId: 'stream-stopped', phase: 'stopped' });
+
+    timers.forEach(({ callback }) => callback());
+
+    const continuousFrames = sendSocketPayload.mock.calls
+      .map((call) => JSON.parse(call[2] as string))
+      .filter((message) => message.type === 'remote-window-input' && message.control?.lane === 'continuous');
+    expect(continuousFrames).toHaveLength(1);
+    expect(continuousFrames[0]?.payload.streamId).toBe('stream-kept');
+  });
+
   it('keeps one reliable input in flight and retries only a retryable NACK with the same sequence', () => {
     const sendSocketPayload = vi.fn();
     const runtime = createRemoteWindowMessageRuntime({ now: () => 200 });
@@ -886,7 +955,7 @@ describe('remote window message runtime', () => {
     expect(release.control.sequence).not.toBe(first.control.sequence);
   });
 
-  it('holds continuous gestures behind a reliable barrier', () => {
+  it('flushes new continuous gestures at cadence while a reliable barrier is in flight', () => {
     const sendSocketPayload = vi.fn();
     const timers: Array<{ callback: () => void; delay: number }> = [];
     const runtime = createRemoteWindowMessageRuntime({
@@ -935,8 +1004,33 @@ describe('remote window message runtime', () => {
       },
     });
 
-    expect(timers).toHaveLength(1);
     expect(sendSocketPayload).toHaveBeenCalledTimes(1);
+    expect(sendSocketPayload.mock.calls.map((call) => JSON.parse(call[2] as string))).toEqual([
+      expect.objectContaining({
+        control: expect.objectContaining({ lane: 'reliable' }),
+        payload: expect.objectContaining({
+          event: expect.objectContaining({ kind: 'pointer', phase: 'down' }),
+        }),
+      }),
+    ]);
+
+    const continuousTimer = timers.find((timer) => timer.delay === REMOTE_WINDOW_INPUT_SMOOTH_FLUSH_INTERVAL_MS);
+    expect(continuousTimer).toBeTruthy();
+    continuousTimer!.callback();
+
+    expect(sendSocketPayload).toHaveBeenCalledTimes(2);
+    expect(sendSocketPayload.mock.calls[1]![2] as string).toEqual(expect.stringContaining('remote-window-input'));
+    const sent = JSON.parse(sendSocketPayload.mock.calls[1]![2] as string);
+    expect(sent).toMatchObject({
+      control: { lane: 'continuous', attempt: 1 },
+      payload: {
+        event: {
+          kind: 'scroll',
+          deltaY: 12,
+        },
+        deliveryKind: 'sample',
+      },
+    });
   });
 
   it('retries a reliable ACK timeout once with the same sequence before advancing the barrier', () => {

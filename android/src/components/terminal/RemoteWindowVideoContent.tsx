@@ -65,7 +65,8 @@ export function RemoteWindowVideoContent({
               inset: 0,
               width: '100%',
               height: '100%',
-              objectFit: 'cover',
+              objectFit: 'contain',
+              objectPosition: '50% 50%',
               zIndex: 2,
               opacity: 1,
             }}
@@ -82,7 +83,8 @@ export function RemoteWindowVideoContent({
               inset: 0,
               width: '100%',
               height: '100%',
-              objectFit: 'cover',
+              objectFit: 'contain',
+              objectPosition: '50% 50%',
               zIndex: 2,
               opacity: 1,
             }}
@@ -104,6 +106,8 @@ export function RemoteWindowVideoContent({
           style={{
             ...styles.videoElement,
             ...focusedVideoStyle,
+            objectFit: 'contain',
+            objectPosition: '50% 50%',
             // Android WebView hardware compositor does not render WebRTC
             // MediaStream <video> to the screen even when readyState=4 and
             // play() resolves. The focus display canvas draws the same frames

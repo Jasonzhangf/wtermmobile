@@ -229,7 +229,7 @@ function createRelayRtcSocket() {
       bridgePort: 3333,
       authToken: 'token',
       relayHostId: 'daemon-host-a',
-      transportMode: 'webrtc',
+      transportMode: 'auto',
       relayEndpointCandidates: [{
         id: 'relay-rtc:daemon-host-a',
         kind: 'relay-rtc',
@@ -243,7 +243,7 @@ function createRelayRtcSocket() {
       turnServerUrl: '',
       turnUsername: '',
       turnCredential: '',
-      transportMode: 'webrtc',
+      transportMode: 'auto',
       traversalRelay: {
         relayBaseUrl: 'https://relay.example.test/relay/',
         accessToken: 'relay-access',

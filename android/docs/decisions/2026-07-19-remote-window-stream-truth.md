@@ -169,6 +169,38 @@ No fallback may silently downgrade this feature to screenshot, terminal buffer r
 
 ## Implementation Status
 
+## 2026-09-11 Projection and gesture correction
+
+The Android projection must preserve the selected remote frame's intrinsic aspect
+ratio in both floating and fullscreen modes. The locked video surface is the
+device container; its content uses aspect-fit with equal horizontal and vertical
+centering. Local CSS `cover`, stretch, or edge alignment is not a valid way to
+match the remote display. A fullscreen `window-resize` request remains an
+independent daemon control intent for resizable ordinary app windows; it does
+not change the local projection rule and must never resize iTerm2 panes or shell
+geometry.
+
+Gesture classification is independent from media quality and latency policy.
+At fullscreen scale 1, one-finger touch may emit the existing remote scroll/tap
+actions. After local pinch or double-tap zoom, one-finger touch is local-only;
+two-finger motion owns local pan and pinch. No gesture branch may wait for, or
+reinterpret itself from, GOP, frame queue, bitrate, or ACK timing.
+
+Media latency work is a separate pipeline concern. Capture, send, receive,
+decode, present, input, and ACK timestamps must remain separately observable.
+Any GOP/keyframe tuning must use a verified sender/runtime capability and must
+not be faked by increasing queues, suppressing input, lowering FPS blindly, or
+changing gesture semantics.
+
+RustDesk's current server path is a reference for this work: its live stream
+encoder leaves `keyframe_interval` unset (the explicit interval is reserved for
+recording), uses a bounded `VideoFrameController`, and adapts from measured
+delay / blocked-send evidence before changing FPS or bitrate. Our current
+`@roamhq/wrtc` `RTCVideoSource`/`RTCRtpSender` surface exposes no verified GOP or
+keyframe interval control, so this slice records the capability gap instead of
+adding an unrecognized wire field or pretending the profile already controls
+GOP.
+
 Current status is anchored for app-window catalog, collapsed same-app picker rows plus active video-layer primary-plus-children sibling window switching inside the same locked video container, portrait child rail above the primary video and landscape child rail beside it, default-collapsed iTerm2 picker grouping, real ScreenCaptureKit/WebRTC video, Android floating/fullscreen projection with safe-area top chrome and TerminalPage-measured QuickBar + IME bottom-inset lift for the whole locked container, toolbar-reachable floating resize, fullscreen aspect-fit drawing plus ordinary app-window-only remote target resize fill, iTerm2 geometry protection, zoom/pinch without any minimap overlay, route-derived ICE for remote-window video, smooth/quality stream profiles, focus-aware image paste routing, raw Android IME text routing, 1x/zoomed one-finger realtime remote scroll, 250 ms reliable hold-drag, 500 ms right click, zoomed two-finger local pan, local pinch, reliable cancel release, Mouse Emulation pointer/wheel input, read-only projection for unsupported iTerm pane input routes, generic `bring-to-focus + AXRaise + os-event` click/pointer/scroll/key injection, decoded-frame-driven canvas projection, bounded per-lane latest capture conversion, and remote-window screenshot requests that reuse the existing remote screenshot/file-download path without focus. Remaining live completion gaps are installed-daemon and Android real-device A/B, active-route input/frame-age/cleanup proof, and iTerm2-pane stream/input proof.
 Current status is also anchored for foreground/background power safety: backgrounded app state is a close/stop signal for any active remote-window stream and must not leave the receiver or capture pipeline running offscreen.
 

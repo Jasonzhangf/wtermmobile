@@ -1,4 +1,4 @@
-import { useEffect, type RefObject } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 
 export interface RemoteWindowCompositeCanvasSlot {
   windowId: string;
@@ -43,6 +43,9 @@ export function useRemoteWindowCompositeCanvas({
   subscribeDecodedFrame,
   onProjectionError,
 }: UseRemoteWindowCompositeCanvasOptions) {
+  const focusProjectionRef = useRef({ layout, focusedWindow, overviewMediaStream });
+  focusProjectionRef.current = { layout, focusedWindow, overviewMediaStream };
+
   useEffect(() => {
     if (!receiverMediaStream || !focusDisplayCanvasRef) {
       return;
@@ -74,9 +77,14 @@ export function useRemoteWindowCompositeCanvas({
       if (!canvas || video.readyState < 2 || video.videoWidth <= 0 || video.videoHeight <= 0) {
         return;
       }
-      if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+      const projection = focusProjectionRef.current;
+      const cropLayout = projection.layout;
+      const cropWindow = projection.focusedWindow;
+      const cropFocus = Boolean(cropLayout && cropWindow && !projection.overviewMediaStream);
+      if (canvas.width !== (cropFocus && cropWindow ? cropWindow.width : video.videoWidth)
+        || canvas.height !== (cropFocus && cropWindow ? cropWindow.height : video.videoHeight)) {
+        canvas.width = cropFocus && cropWindow ? Math.max(1, Math.round(cropWindow.width)) : video.videoWidth;
+        canvas.height = cropFocus && cropWindow ? Math.max(1, Math.round(cropWindow.height)) : video.videoHeight;
       }
       if (cachedCanvas !== canvas) {
         cachedCanvas = canvas;
@@ -87,7 +95,23 @@ export function useRemoteWindowCompositeCanvas({
         return;
       }
       try {
-        cachedContext.drawImage(video, 0, 0, canvas.width, canvas.height);
+        if (cropFocus && cropLayout && cropWindow) {
+          const scaleX = video.videoWidth / Math.max(1, cropLayout.canvasWidth);
+          const scaleY = video.videoHeight / Math.max(1, cropLayout.canvasHeight);
+          cachedContext.drawImage(
+            video,
+            cropWindow.offsetX * scaleX,
+            cropWindow.offsetY * scaleY,
+            cropWindow.width * scaleX,
+            cropWindow.height * scaleY,
+            0,
+            0,
+            canvas.width,
+            canvas.height,
+          );
+        } else {
+          cachedContext.drawImage(video, 0, 0, canvas.width, canvas.height);
+        }
         lastPresentedFrames = presentedFrames;
       } catch (error) {
         onProjectionError?.(error instanceof Error ? error.message : 'remote window focus canvas draw failed');

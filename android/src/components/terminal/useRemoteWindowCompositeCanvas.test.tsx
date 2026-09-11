@@ -44,6 +44,45 @@ describe('useRemoteWindowCompositeCanvas projection owner', () => {
     expect(context.drawImage).toHaveBeenCalledWith(video, 0, 0, 1280, 720);
   });
 
+  it('crops the visible focus canvas from the daemon canvas layout', () => {
+    const receiver = { getTracks: () => [] } as unknown as MediaStream;
+    const video = document.createElement('video');
+    Object.defineProperties(video, {
+      readyState: { value: 2, configurable: true },
+      videoWidth: { value: 1920, configurable: true },
+      videoHeight: { value: 1080, configurable: true },
+    });
+    video.srcObject = receiver;
+    const focus = document.createElement('canvas');
+    const context = { drawImage: vi.fn() };
+    focus.getContext = vi.fn(() => context) as unknown as HTMLCanvasElement['getContext'];
+    const focusedWindow = { windowId: 'focus', offsetX: 560, offsetY: 324, width: 800, height: 600 };
+    let subscriber: ((frame: { video: HTMLVideoElement; presentedFrames?: number }) => void) | null = null;
+
+    renderHook(() => useRemoteWindowCompositeCanvas({
+      layout: { windows: [focusedWindow], canvasWidth: 1920, canvasHeight: 1080 },
+      focusedWindow,
+      overviewCropVisible: false,
+      receiverMediaStream: receiver,
+      overviewMediaStream: null,
+      videoElementRef: { current: video },
+      overviewVideoElementRef: { current: null },
+      overviewCanvasRef: { current: null },
+      focusDisplayCanvasRef: { current: focus },
+      thumbnailCanvasRefs: { current: new Map() },
+      subscribeDecodedFrame: (callback) => {
+        subscriber = callback;
+        return () => { subscriber = null; };
+      },
+    }));
+
+    act(() => subscriber?.({ video, presentedFrames: 1 }));
+
+    expect(focus.width).toBe(800);
+    expect(focus.height).toBe(600);
+    expect(context.drawImage).toHaveBeenCalledWith(video, 560, 324, 800, 600, 0, 0, 800, 600);
+  });
+
   it('draws overview and thumbnails once per decoded frame with cached contexts', () => {
     const requestAnimationFrame = vi.spyOn(window, 'requestAnimationFrame');
     let frameCallback: ((now: number, metadata: { presentedFrames?: number }) => void) | null = null;

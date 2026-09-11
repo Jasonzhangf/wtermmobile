@@ -55,6 +55,9 @@ describe('RemoteWindowVideoContent view owner', () => {
     expect(onVideoLifecycle).toHaveBeenNthCalledWith(1, 'loadedmetadata');
     expect(onVideoLifecycle).toHaveBeenNthCalledWith(2, 'canplay');
     expect(screen.getByTestId('remote-window-overview-crop')).toBeTruthy();
+    const overviewCanvas = screen.getByTestId('remote-window-overview-crop');
+    expect(overviewCanvas.style.objectFit).toBe('contain');
+    expect(overviewCanvas.style.objectPosition).toBe('50% 50%');
     expect(screen.queryByTestId('remote-window-focus-display-canvas')).toBeNull();
   });
 
@@ -73,6 +76,8 @@ describe('RemoteWindowVideoContent view owner', () => {
     />);
     const canvas = screen.getByTestId('remote-window-focus-display-canvas');
     expect(canvas).toBeTruthy();
+    expect(canvas.style.objectFit).toBe('contain');
+    expect(canvas.style.objectPosition).toBe('50% 50%');
     const video = screen.getByTestId('remote-window-video');
     expect(video.style.opacity).toBe('0');
   });
