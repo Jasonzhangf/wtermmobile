@@ -133,6 +133,7 @@ interface PendingAdaptiveWidthCleanup {
   key: string;
   sessionName: string;
   backend: 'tmux' | 'herdr';
+  paneId: string | null;
   baseline: TerminalGeometry | null;
   appliedCols: number | null;
   appliedRows: number | null;
@@ -196,7 +197,9 @@ export function createTerminalMirrorRuntime(deps: TerminalMirrorRuntimeDeps): Te
 
   function createMirror(sessionName: string, backend: 'tmux' | 'herdr' = 'tmux'): SessionMirror {
     const nextKey = deps.getMirrorKey(sessionName, backend);
-    attemptPendingAdaptiveWidthCleanup(nextKey);
+    if (!attemptPendingAdaptiveWidthCleanup(nextKey)) {
+      throw new Error(`adaptive width cleanup pending for ${sessionName}; refusing to create mirror until cleanup succeeds`);
+    }
     const mirror: SessionMirror = {
       key: nextKey,
       sessionName,
@@ -657,6 +660,15 @@ export function createTerminalMirrorRuntime(deps: TerminalMirrorRuntimeDeps): Te
       try {
         releaseAdaptiveTmuxWidth(mirror, reason);
       } catch (error) {
+        if (isTmuxSessionUnavailableError(error)) {
+          console.warn(
+            `[${deps.logTimePrefix()}] adaptive width target already unavailable for ${mirror.sessionName}; cleanup state discarded`,
+          );
+          pendingAdaptiveWidthCleanup.delete(mirror.key);
+          mirror.adaptiveWidthAppliedCols = null;
+          mirror.adaptiveWidthBaselineGeometry = null;
+          return true;
+        }
         recordAdaptiveWidthCleanupFailure(mirror);
         console.error(
           `[${deps.logTimePrefix()}] adaptive width release failed while clearing mirror lease: ${
@@ -723,6 +735,7 @@ export function createTerminalMirrorRuntime(deps: TerminalMirrorRuntimeDeps): Te
       key: mirror.key,
       sessionName: mirror.sessionName,
       backend: mirror.backend || 'tmux',
+      paneId: readMirrorCleanupPaneId(mirror),
       baseline: mirror.adaptiveWidthBaselineGeometry
         ? { ...mirror.adaptiveWidthBaselineGeometry }
         : null,
@@ -741,6 +754,25 @@ export function createTerminalMirrorRuntime(deps: TerminalMirrorRuntimeDeps): Te
       return true;
     }
     try {
+      if (pending.paneId) {
+        let currentPaneId: string | null = null;
+        try {
+          currentPaneId = deps.readTmuxPaneMetrics(pending.sessionName, pending.backend).paneId;
+        } catch (error) {
+          if (isTmuxSessionUnavailableError(error)) {
+            pendingAdaptiveWidthCleanup.delete(key);
+            return true;
+          }
+          return false;
+        }
+        if (currentPaneId !== pending.paneId) {
+          console.warn(
+            `[${deps.logTimePrefix()}] adaptive width cleanup target changed for ${pending.sessionName}; discarding stale cleanup`,
+          );
+          pendingAdaptiveWidthCleanup.delete(key);
+          return true;
+        }
+      }
       releaseAdaptiveTmuxWidth({
         sessionName: pending.sessionName,
         backend: pending.backend,
@@ -755,6 +787,14 @@ export function createTerminalMirrorRuntime(deps: TerminalMirrorRuntimeDeps): Te
         }`,
       );
       return false;
+    }
+  }
+
+  function readMirrorCleanupPaneId(mirror: SessionMirror): string | null {
+    try {
+      return deps.readTmuxPaneMetrics(mirror.sessionName, mirror.backend).paneId;
+    } catch {
+      return null;
     }
   }
 
