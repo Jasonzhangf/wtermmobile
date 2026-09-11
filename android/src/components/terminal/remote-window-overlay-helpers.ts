@@ -108,7 +108,10 @@ export const initialFullscreenViewport: FullscreenViewportState = {
   panY: 0,
 };
 
-export const initialFullscreenDisplayMode: FullscreenDisplayMode = 'fill';
+// Keep the receiver aligned to the remote frame's intrinsic ratio. A remote
+// resize request is an independent control operation and must not turn the
+// local projection into a cover/crop surface.
+export const initialFullscreenDisplayMode: FullscreenDisplayMode = 'fit';
 
 export function cloneRemoteWindowCatalogPayload(
   payload: RemoteWindowStreamTargetsResponsePayload,

@@ -539,7 +539,20 @@ export function createRemoteWindowStreamDaemonRuntime(
   }
 
   function isRemoteWindowPeerMediaReady(entry: ActiveRemoteWindowStream) {
-    return Boolean(entry.peerConnection.localDescription);
+    // A local description only means that the offer was created. Feeding the
+    // RTCVideoSource before ICE is connected lets the encoder emit delta
+    // frames while the receiver is still negotiating; Android then has no
+    // decodable reference frame and builds an avoidable decoder backlog.
+    // `answer-accepted` is a control-plane milestone, not streaming truth.
+    return Boolean(
+      entry.peerConnection.localDescription
+      && entry.remoteDescriptionApplied
+      && (
+        entry.peerConnection.connectionState === 'connected'
+        || entry.peerConnection.iceConnectionState === 'connected'
+        || entry.peerConnection.iceConnectionState === 'completed'
+      ),
+    );
   }
 
   function sendRemoteWindowVideoFrame(

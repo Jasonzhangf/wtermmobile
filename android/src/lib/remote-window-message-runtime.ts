@@ -383,10 +383,7 @@ export function createRemoteWindowMessageRuntime(input?: {
     }
   };
 
-  const flushContinuousInput = (force = false) => {
-    if (!force && reliableInputInFlight) {
-      return false;
-    }
+  const flushContinuousInput = (_force = false) => {
     clearContinuousFlushTimer();
     const pendingKeys = [...pendingContinuousInput.keys()];
     pendingKeys.forEach((key) => {
@@ -441,7 +438,7 @@ export function createRemoteWindowMessageRuntime(input?: {
   };
 
   const scheduleContinuousInputFlush = () => {
-    if (continuousFlushTimer !== null || reliableInputInFlight || reliableInputQueue.length > 0) {
+    if (continuousFlushTimer !== null || reliableInputQueue.length > 0) {
       return;
     }
     continuousFlushTimer = setTimeoutFn(() => {

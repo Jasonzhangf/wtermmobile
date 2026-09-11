@@ -2706,20 +2706,20 @@ describe('RemoteWindowOverlay', () => {
 
     const content = screen.getByTestId('remote-window-video-content');
     await waitFor(() => {
-      expect(overlay.getAttribute('data-display-mode')).toBe('fill');
-      expect(Number.parseFloat(content.style.left)).toBeCloseTo(0, 1);
-      expect(Number.parseFloat(content.style.top)).toBeCloseTo(-12.5, 1);
-      expect(Number.parseFloat(content.style.width)).toBeCloseTo(300, 1);
-      expect(Number.parseFloat(content.style.height)).toBeCloseTo(225, 1);
+      expect(overlay.getAttribute('data-display-mode')).toBe('fit');
+      expect(Number.parseFloat(content.style.left)).toBeCloseTo(16.7, 1);
+      expect(Number.parseFloat(content.style.top)).toBeCloseTo(0, 1);
+      expect(Number.parseFloat(content.style.width)).toBeCloseTo(266.7, 1);
+      expect(Number.parseFloat(content.style.height)).toBeCloseTo(200, 1);
     });
 
     await waitFor(() => {
-      expect(Number.parseFloat(content.style.left)).toBeCloseTo(0, 1);
-      expect(Number.parseFloat(content.style.top)).toBeCloseTo(-12.5, 1);
-      expect(Number.parseFloat(content.style.width)).toBeCloseTo(300, 1);
-      expect(Number.parseFloat(content.style.height)).toBeCloseTo(225, 1);
+      expect(Number.parseFloat(content.style.left)).toBeCloseTo(16.7, 1);
+      expect(Number.parseFloat(content.style.top)).toBeCloseTo(0, 1);
+      expect(Number.parseFloat(content.style.width)).toBeCloseTo(266.7, 1);
+      expect(Number.parseFloat(content.style.height)).toBeCloseTo(200, 1);
     });
-    expect(overlay.getAttribute('data-display-mode')).toBe('fill');
+    expect(overlay.getAttribute('data-display-mode')).toBe('fit');
     fireEvent.click(screen.getByTestId('remote-window-more-toggle'));
     expect(screen.getByTestId('remote-window-fullscreen-display-toggle')).toBeTruthy();
   });
@@ -2920,7 +2920,7 @@ describe('RemoteWindowOverlay', () => {
     );
   });
 
-  it('fills the embedded preview surface with the largest projected content rect', async () => {
+  it('fits and centers the embedded preview surface without crop', async () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 844 });
     Object.defineProperty(window, 'visualViewport', {
@@ -2969,10 +2969,10 @@ describe('RemoteWindowOverlay', () => {
 
     const content = screen.getByTestId('remote-window-video-content');
     await waitFor(() => {
-      expect(Number.parseFloat(content.style.left)).toBeCloseTo(0, 1);
-      expect(Number.parseFloat(content.style.width)).toBeCloseTo(300, 1);
-      expect(Number.parseFloat(content.style.top)).toBeCloseTo(-5, 1);
-      expect(Number.parseFloat(content.style.height)).toBeCloseTo(210, 1);
+      expect(Number.parseFloat(content.style.left)).toBeCloseTo(7.1, 1);
+      expect(Number.parseFloat(content.style.width)).toBeCloseTo(285.7, 1);
+      expect(Number.parseFloat(content.style.top)).toBeCloseTo(0, 1);
+      expect(Number.parseFloat(content.style.height)).toBeCloseTo(200, 1);
     });
   });
 
@@ -3059,7 +3059,7 @@ describe('RemoteWindowOverlay', () => {
     expect(screen.getByTestId('remote-window-target-app-1').textContent).toContain('800x1000');
   });
 
-  it('maps fullscreen input through the same fill content rect after a target resize request', async () => {
+  it('maps fullscreen input through the same fit content rect after a target resize request', async () => {
     const target = makeTarget('app-1', 'TextEdit', 'app-window');
     target.videoTarget.cropRectTopLeftPx = { x: 10, y: 40, width: 800, height: 600 };
     const mediaStream = { id: 'media-stream-1' } as MediaStream;
@@ -3131,12 +3131,12 @@ describe('RemoteWindowOverlay', () => {
       throw new Error('expected click payload');
     }
     expect(event.normalizedX).toBeCloseTo(0.5, 3);
-    expect(event.normalizedY).toBeCloseTo(1 / 18, 3);
+    expect(event.normalizedY).toBeCloseTo(0, 3);
     expect(event.x).toBeCloseTo(410, 3);
-    expect(event.y).toBeCloseTo(73.33, 1);
+    expect(event.y).toBeCloseTo(40, 1);
   });
 
-  it('supports fullscreen pinch zoom, zoomed single-finger remote input, and two-finger local pan', async () => {
+  it('supports fullscreen pinch zoom, zoomed single-finger suppression, and two-finger local pan', async () => {
     const mediaStream = { id: 'media-stream-1' } as MediaStream;
     const sendInput = vi.fn();
     const requestTargets = vi.fn(async () => ({
@@ -3193,23 +3193,19 @@ describe('RemoteWindowOverlay', () => {
     await waitFor(() => {
       expect(Number.parseFloat(content.style.width || '0')).toBeGreaterThan(fitWidth);
     });
-    const leftAfterPinch = Number.parseFloat(content.style.left || '0');
-
     fireEvent.pointerUp(surface, { pointerId: 1, pointerType: 'touch', clientX: 70, clientY: 100, button: 0, buttons: 0 });
+    await flushRemoteWindowSurfaceLayout();
+    const leftAfterPinch = Number.parseFloat(content.style.left || '0');
     fireEvent.pointerMove(surface, { pointerId: 2, pointerType: 'touch', clientX: 230, clientY: 120, button: 0, buttons: 1 });
-    await waitFor(() => {
-      expect(Number.parseFloat(content.style.left || '0')).not.toBe(leftAfterPinch);
-    });
+    expect(Number.parseFloat(content.style.left || '0')).toBe(leftAfterPinch);
+    expect(sendInput).not.toHaveBeenCalled();
     sendInput.mockClear();
     fireEvent.pointerUp(surface, { pointerId: 2, pointerType: 'touch', clientX: 260, clientY: 100, button: 0, buttons: 0 });
     fireEvent.pointerDown(surface, { pointerId: 5, pointerType: 'touch', clientX: 150, clientY: 100, button: 0, buttons: 1 });
+    fireEvent.pointerMove(surface, { pointerId: 5, pointerType: 'touch', clientX: 170, clientY: 120, button: 0, buttons: 1 });
     fireEvent.pointerUp(surface, { pointerId: 5, pointerType: 'touch', clientX: 150, clientY: 100, button: 0, buttons: 0 });
-    await waitForActionRemoteInputCount(sendInput, 1);
-    expectEveryRemoteInputIsActionOnly(sendInput);
-    expect(actionRemoteInputPayloads(sendInput)[0].event).toEqual(expect.objectContaining({
-      kind: 'click',
-      pointerId: 5,
-    }));
+    expect(Number.parseFloat(content.style.left || '0')).toBe(leftAfterPinch);
+    expect(sendInput).not.toHaveBeenCalled();
     sendInput.mockClear();
 
     const leftBeforeTwoFingerPan = Number.parseFloat(content.style.left || '0');
@@ -3565,7 +3561,7 @@ describe('RemoteWindowOverlay', () => {
     expect(sendInput).not.toHaveBeenCalled();
   });
 
-  it('routes zoomed fullscreen two-finger vertical movement to remote scroll', async () => {
+  it('routes zoomed fullscreen two-finger vertical movement to local pan', async () => {
     const mediaStream = { id: 'media-stream-1' } as MediaStream;
     const sendInput = vi.fn();
     const requestTargets = vi.fn(async () => ({
@@ -3608,6 +3604,7 @@ describe('RemoteWindowOverlay', () => {
       }),
     });
     await flushRemoteWindowSurfaceLayout();
+    const content = screen.getByTestId('remote-window-video-content');
 
     fireEvent.pointerDown(surface, { pointerId: 61, pointerType: 'touch', clientX: 100, clientY: 100, button: 0, buttons: 1 });
     fireEvent.pointerDown(surface, { pointerId: 62, pointerType: 'touch', clientX: 200, clientY: 100, button: 0, buttons: 1 });
@@ -3619,6 +3616,7 @@ describe('RemoteWindowOverlay', () => {
 
     sendInput.mockClear();
 
+    const topBeforePan = Number.parseFloat(content.style.top || '0');
     fireEvent.pointerDown(surface, { pointerId: 63, pointerType: 'touch', clientX: 110, clientY: 130, button: 0, buttons: 1 });
     fireEvent.pointerDown(surface, { pointerId: 64, pointerType: 'touch', clientX: 190, clientY: 130, button: 0, buttons: 1 });
     fireEvent.pointerMove(surface, { pointerId: 63, pointerType: 'touch', clientX: 110, clientY: 90, button: 0, buttons: 1 });
@@ -3628,11 +3626,13 @@ describe('RemoteWindowOverlay', () => {
     fireEvent.pointerMove(surface, { pointerId: 64, pointerType: 'touch', clientX: 190, clientY: 70, button: 0, buttons: 1 });
     fireEvent.pointerMove(surface, { pointerId: 63, pointerType: 'touch', clientX: 110, clientY: 50, button: 0, buttons: 1 });
     fireEvent.pointerMove(surface, { pointerId: 64, pointerType: 'touch', clientX: 190, clientY: 50, button: 0, buttons: 1 });
-    await waitFor(() => expect(sendInput).toHaveBeenCalled());
+    await waitFor(() => {
+      expect(Number.parseFloat(content.style.top || '0')).not.toBe(topBeforePan);
+    });
     fireEvent.pointerUp(surface, { pointerId: 63, pointerType: 'touch', clientX: 110, clientY: 90, button: 0, buttons: 0 });
     fireEvent.pointerUp(surface, { pointerId: 64, pointerType: 'touch', clientX: 190, clientY: 90, button: 0, buttons: 0 });
 
-    expect(actionRemoteInputPayloads(sendInput).some((payload) => payload.event.kind === 'scroll')).toBe(true);
+    expect(sendInput).not.toHaveBeenCalled();
   });
 
   it('lifts the fullscreen display container above IME without stealing unzoomed remote scroll control', async () => {
@@ -3762,7 +3762,7 @@ describe('RemoteWindowOverlay', () => {
     expect(sendInput).not.toHaveBeenCalled();
   });
 
-  it('keeps exact-fill fullscreen IME projection stable while unzoomed drag sends remote scroll', async () => {
+  it('keeps exact-fit fullscreen IME projection stable while unzoomed drag sends remote scroll', async () => {
     const target = makeTarget('app-1', 'TextEdit', 'app-window');
     target.videoTarget.cropRectTopLeftPx = { x: 10, y: 40, width: 300, height: 500 };
     const mediaStream = { id: 'media-stream-1' } as MediaStream;

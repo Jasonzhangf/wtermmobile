@@ -22,4 +22,12 @@ describe('remote window stream daemon v2 contract', () => {
     expect(source).not.toContain('peerConnection.addTransceiver(videoTrack');
     expect(source).not.toContain('peerConnection.addTransceiver(streamEntry.overviewVideoTrack');
   });
+
+  it('does not feed captured frames before the ICE-connected streaming milestone', () => {
+    const source = readFileSync(new URL('./remote-window-stream-daemon.ts', import.meta.url), 'utf8');
+    expect(source).toContain("entry.remoteDescriptionApplied");
+    expect(source).toContain("entry.peerConnection.connectionState === 'connected'");
+    expect(source).toContain("entry.peerConnection.iceConnectionState === 'completed'");
+    expect(source).toContain('answer-accepted');
+  });
 });

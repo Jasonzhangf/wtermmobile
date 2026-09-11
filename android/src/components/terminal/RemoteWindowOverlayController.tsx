@@ -500,11 +500,12 @@ export const RemoteWindowOverlayController = memo(function RemoteWindowOverlayCo
   const lastReportedQuickBarSuppressionRef = useRef<boolean | null>(null);
   const lastReportedBodySuppressionRef = useRef<boolean | null>(null);
   const lastReportedInputContextKeyRef = useRef<string | null>(null);
-  const resetSurfaceGestures = useCallback(() => {
-    surfacePointersRef.current.clear();
-    surfaceGestureRef.current = null;
-    surfacePinchStartRef.current = null;
-  }, []);
+  const clearSurfacePointerState = useCallback(() => {
+    clearLongPressTimer();
+    surfacePointersRef.current.clear(); surfaceGestureRef.current = null; surfaceLocalPanStartRef.current = null;
+    surfacePinchStartRef.current = null; secondPointerPendingRef.current = null;
+  }, [clearLongPressTimer]);
+  const resetSurfaceGestures = clearSurfacePointerState;
   const {
     commitFullscreenViewport,
     fullscreenDisplayMode,
@@ -885,9 +886,7 @@ export const RemoteWindowOverlayController = memo(function RemoteWindowOverlayCo
     setItermPaneTargetsExpanded(false);
     setAppSwitchOpen(false);
     floatingResizeRef.current = null;
-    surfacePointersRef.current.clear();
-    surfaceGestureRef.current = null;
-    surfacePinchStartRef.current = null;
+    clearSurfacePointerState();
     screenshotController.reset();
     activeHandoffRef.current = null;
     handoffVideoVisibilityRef.current = null;
@@ -945,6 +944,7 @@ export const RemoteWindowOverlayController = memo(function RemoteWindowOverlayCo
     setState((current) => closeRemoteWindowOverlay(current));
   }, [
     activeSessionId,
+    clearSurfacePointerState,
     resetCatalog,
     resetFullscreenViewport,
     setFloatingOffset,
@@ -986,9 +986,7 @@ export const RemoteWindowOverlayController = memo(function RemoteWindowOverlayCo
     }
     collectStreamStatsRef.current = null;
     resetQualityApplyState();
-    surfacePointersRef.current.clear();
-    surfaceGestureRef.current = null;
-    surfacePinchStartRef.current = null;
+    clearSurfacePointerState();
     setReceiverMediaStream(null);
     setOverviewMediaStream(null);
     setReceiverFrameSize(null);
@@ -1000,7 +998,7 @@ export const RemoteWindowOverlayController = memo(function RemoteWindowOverlayCo
       streamInvalidation.streamId,
       new Error(streamInvalidation.message || 'remote window stream is no longer active'),
     ));
-  }, [currentLockedStreamId, resetQualityApplyState, state.phase, streamInvalidation]);
+  }, [clearSurfacePointerState, currentLockedStreamId, resetQualityApplyState, state.phase, streamInvalidation]);
   const publishRemoteWindowInputContext = useCallback(() => {
     if (!inputContext) {
       return;
@@ -1102,7 +1100,7 @@ export const RemoteWindowOverlayController = memo(function RemoteWindowOverlayCo
       || !state.streamId
       || !activeSessionId
       || !surfaceSize
-      || fullscreenDisplayMode !== 'fill'
+      || fullscreenDisplayMode !== initialFullscreenDisplayMode
     ) {
       return;
     }
@@ -1394,9 +1392,7 @@ export const RemoteWindowOverlayController = memo(function RemoteWindowOverlayCo
           }
           collectStreamStatsRef.current = null;
           resetQualityApplyState();
-          surfacePointersRef.current.clear();
-          surfaceGestureRef.current = null;
-          surfacePinchStartRef.current = null;
+          clearSurfacePointerState();
           setReceiverMediaStream(null);
           setOverviewMediaStream(null);
           setReceiverFrameSize(null);
@@ -1454,7 +1450,7 @@ export const RemoteWindowOverlayController = memo(function RemoteWindowOverlayCo
         ));
       }
     });
-  }, [activeSessionId, onRemoteWindowMessage, rememberRemoteWindowCatalogTarget]);
+  }, [activeSessionId, clearSurfacePointerState, onRemoteWindowMessage, rememberRemoteWindowCatalogTarget]);
 
   useEffect(() => () => {
     lastReportedQuickBarSuppressionRef.current = false;
@@ -1786,10 +1782,11 @@ export const RemoteWindowOverlayController = memo(function RemoteWindowOverlayCo
     const viewport = state.mode === 'fullscreen'
       ? fullscreenViewportRef.current
       : initialFullscreenViewport;
-    // 预览与全屏统一按“面积最大化”投影：填满所在表面，保留透视语义相同。
+    // Floating and fullscreen surfaces share the same intrinsic-ratio fit
+    // projection. Remote resize is controlled independently below.
     const displayMode = state.mode === 'fullscreen'
       ? fullscreenDisplayModeRef.current
-      : 'fill';
+      : initialFullscreenDisplayMode;
     const { content } = resolveZoomedContentRect(
       { width: surfaceRect.width, height: surfaceRect.height },
       displaySourceSize,
@@ -2012,6 +2009,7 @@ export const RemoteWindowOverlayController = memo(function RemoteWindowOverlayCo
     }
     if (gesture.mode === 'actionPending') {
       // 手指按住不动 ≥500ms：发右键（触控模式长按）
+      if (gesture.suppressTap) return;
       const geometry = resolveSurfaceInputGeometry();
       if (geometry) {
         const rightClick = buildRemoteWindowClickInputEventRuntime({
@@ -2324,7 +2322,8 @@ export const RemoteWindowOverlayController = memo(function RemoteWindowOverlayCo
       return;
     }
     if (gesture.mode === 'pan' && gesture.pointerId === event.pointerId) {
-      if (!gesture.moved) {
+      const zoomedSingleFingerSuppressed = state.phase === 'targetLocked' && state.mode === 'fullscreen' && fullscreenViewportRef.current.scale > 1.01;
+      if (!gesture.moved && !zoomedSingleFingerSuppressed) {
         const geometry = resolveSurfaceInputGeometry();
         const clickPayload = geometry
           ? buildRemoteWindowClickInputEventRuntime({
@@ -2338,7 +2337,7 @@ export const RemoteWindowOverlayController = memo(function RemoteWindowOverlayCo
           emitRemoteWindowActionInput(clickPayload);
         }
       }
-      commitFullscreenViewport();
+      commitFullscreenViewport(); surfaceLocalPanStartRef.current = null;
       surfaceGestureRef.current = null;
       surfacePointersRef.current.delete(event.pointerId);
       event.preventDefault();
@@ -2457,10 +2456,7 @@ export const RemoteWindowOverlayController = memo(function RemoteWindowOverlayCo
         timeMs: event.timeStamp,
         scrollFraction: touchScrollFractionRef.current,
         invertGestureDirection: touchScrollInvertedRef.current,
-        remainingPointerMode: state.phase === 'targetLocked' && state.mode === 'fullscreen'
-          && fullscreenViewportRef.current.scale > REMOTE_WINDOW_FULLSCREEN_MIN_SCALE
-          ? 'local-pan'
-          : 'remote-action',
+        remainingPointerMode: 'remote-action',
       });
       if (pairResult.nextState.mode === 'localPan') {
         surfaceLocalPanStartRef.current = {
@@ -2495,6 +2491,8 @@ export const RemoteWindowOverlayController = memo(function RemoteWindowOverlayCo
   ]);
 
   const handleVideoSurfacePointerCancel = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    clearLongPressTimer();
+    if (secondPointerPendingRef.current?.pointerId === event.pointerId) secondPointerPendingRef.current = null;
     const gesture = surfaceGestureRef.current;
     surfacePointersRef.current.delete(event.pointerId);
     releasePointerCaptureSafely(event.currentTarget, event.pointerId);
@@ -2522,12 +2520,12 @@ export const RemoteWindowOverlayController = memo(function RemoteWindowOverlayCo
           }
         }
       }
-      surfaceGestureRef.current = null;
-      surfacePinchStartRef.current = null;
+      surfaceGestureRef.current = null; surfaceLocalPanStartRef.current = null; surfacePinchStartRef.current = null;
+      secondPointerPendingRef.current = null; surfacePointersRef.current.clear();
       event.preventDefault();
       event.stopPropagation();
     }
-  }, [applyRemoteWindowTouchPointerResult, resolveSurfaceInputGeometry]);
+  }, [applyRemoteWindowTouchPointerResult, clearLongPressTimer, resolveSurfaceInputGeometry]);
 
   const handleVideoSurfaceWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
     publishRemoteWindowInputContext();
@@ -2621,10 +2619,11 @@ export const RemoteWindowOverlayController = memo(function RemoteWindowOverlayCo
 	      compositeLayout ? focusedWindowSlot : null,
 	    );
 	    const viewport = state.mode === 'fullscreen' ? fullscreenViewport : initialFullscreenViewport;
-	    // 预览抽屉同样按面积最大化填满，避免远端窗口在预览容器里被压缩到很小。
+	    // The preview accepts the remote frame's intrinsic size and centers it;
+	    // it must not cover-crop or stretch the decoded frame.
 	    const displayMode = state.mode === 'fullscreen'
 	      ? fullscreenDisplayMode
-	      : 'fill';
+	      : initialFullscreenDisplayMode;
 	    return resolveZoomedContentRect(surfaceSize, displaySourceSize, viewport, displayMode);
 	  }, [compositeLayout, focusedWindowSlot, fullscreenDisplayMode, fullscreenViewport, receiverFrameSize, state, surfaceSize]);
 
