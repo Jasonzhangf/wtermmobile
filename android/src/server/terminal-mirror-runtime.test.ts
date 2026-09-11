@@ -960,6 +960,30 @@ describe('terminal mirror runtime lifecycle truth', () => {
     }
   });
 
+  it('releases tmux width ownership when mirror destruction bypasses subscriber detach', async () => {
+    const { runtime, sessions, mirrors, runTmux } = createRuntime();
+    const session = createSession('session-1');
+    sessions.set(session.id, session);
+
+    await runtime.attachTmux(session, {
+      sessionName: 'demo',
+      cols: 70,
+      rows: 40,
+      widthMode: 'adaptive-phone',
+    });
+    runTmux.mockClear();
+
+    const mirror = mirrors.get('demo')!;
+    runtime.destroyMirror(mirror, 'daemon shutdown');
+
+    expect(mirrors.has('demo')).toBe(false);
+    expect(mirror.lifecycle).toBe('destroyed');
+    expect(session.adaptiveWidthCols).toBeNull();
+    expect(runTmux).toHaveBeenCalledWith(['resize-window', '-t', '=demo', '-x', '120']);
+    expect(runTmux).toHaveBeenCalledWith(['set-window-option', '-u', '-t', '=demo', 'window-size']);
+    expectOnlyAdaptiveWidthTmuxMutation(runTmux);
+  });
+
   it('does not touch tmux sessions on daemon start for historical adaptive state', () => {
     const { runtime, runTmux } = createRuntime();
     runTmux.mockImplementation((args?: string[]) => {
