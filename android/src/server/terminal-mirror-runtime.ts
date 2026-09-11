@@ -1012,8 +1012,11 @@ export function createTerminalMirrorRuntime(deps: TerminalMirrorRuntimeDeps): Te
     if (session.backend && session.backend !== requestedBackend) {
       throw new Error(`session backend changed after channel allocation: ${session.backend} -> ${requestedBackend}`);
     }
-    session.backend = requestedBackend;
     const nextMirrorKey = deps.getMirrorKey(nextSessionName, requestedBackend);
+    if (!attemptPendingAdaptiveWidthCleanup(nextMirrorKey)) {
+      throw new Error(`adaptive width cleanup pending for ${nextSessionName}; refusing to attach until cleanup succeeds`);
+    }
+    session.backend = requestedBackend;
     const existingMirror = mirrors.get(nextMirrorKey) || null;
     if (existingMirror && existingMirror.backend !== requestedBackend) {
       throw new Error(`session name ${nextSessionName} is already owned by ${existingMirror.backend}`);
