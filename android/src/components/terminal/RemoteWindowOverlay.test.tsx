@@ -3136,7 +3136,7 @@ describe('RemoteWindowOverlay', () => {
     expect(event.y).toBeCloseTo(73.33, 1);
   });
 
-  it('supports fullscreen pinch zoom, zoomed single-finger pan, and two-finger scroll', async () => {
+  it('supports fullscreen pinch zoom, zoomed single-finger remote input, and two-finger local pan', async () => {
     const mediaStream = { id: 'media-stream-1' } as MediaStream;
     const sendInput = vi.fn();
     const requestTargets = vi.fn(async () => ({
@@ -3223,7 +3223,7 @@ describe('RemoteWindowOverlay', () => {
       expect(Number.parseFloat(content.style.width || '0')).toBeGreaterThanOrEqual(fitWidth);
     });
     expect(screen.queryByTestId('remote-window-minimap')).toBeNull();
-    expect(actionRemoteInputPayloads(sendInput).some((payload) => payload.event.kind === 'scroll')).toBe(true);
+    expect(actionRemoteInputPayloads(sendInput).some((payload) => payload.event.kind === 'scroll')).toBe(false);
   });
 
   it('routes floating two-finger vertical movement to realtime remote scroll actions without entering fullscreen', async () => {

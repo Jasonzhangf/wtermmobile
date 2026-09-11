@@ -2229,7 +2229,8 @@ export const RemoteWindowOverlayController = memo(function RemoteWindowOverlayCo
         invertGestureDirection: touchScrollInvertedRef.current,
         pinchEnabled: state.mode === 'fullscreen',
         scrollEnabled: true,
-        panEnabled: false,
+        panEnabled: state.mode === 'fullscreen'
+          && fullscreenViewportRef.current.scale > REMOTE_WINDOW_FULLSCREEN_MIN_SCALE,
       });
       surfaceGestureRef.current = pairResult.nextState;
       if (pairResult.remoteEvents.length > 0) {
