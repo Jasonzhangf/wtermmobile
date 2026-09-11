@@ -1,0 +1,25 @@
+{
+  "$schema": "https://appsdk.local/contracts/records/fix-candidate-record.schema.json",
+  "fix_candidate_id": "FIX-9cbefaa29aaa",
+  "issue_id": "zterm-runtime-architecture-v2",
+  "module_id": "zterm-runtime-v2",
+  "worktree_id": "WT-9cbefaa29aaa",
+  "base_commit": "4639d3b352cdb2b0da6b521212c4f7d3a96a05b0",
+  "head_commit": "9cbefaa29aaaa57bfd468aa1d65224acca891139",
+  "tree_hash": "50987e1dbcd4795643d234dde6b83e817a9905ea",
+  "diff_hash": "sha256:2a570883c81dc529e8784e1081021357de399727c71cc6bebf26593b419a7479",
+  "design_id": "zterm-runtime-architecture-v2-governance-migration-016",
+  "scope_hash": "sha256:41cf7587bc2df36770c4f8cc7218c3f6b4e543c0957a82c7368caf6c5cc430cb",
+  "changed_paths": [
+    "android/src/server/terminal-http-runtime.ts",
+    "android/src/server/terminal-mirror-capture.ts",
+    "android/src/server/terminal-mirror-runtime.test.ts",
+    "android/src/server/terminal-mirror-runtime.ts"
+  ],
+  "verification_evidence_ids": [
+    "whitebox-9cbefaa29aaa",
+    "install-9cbefaa29aaa",
+    "restart-9cbefaa29aaa"
+  ],
+  "created_at": "2026-09-11T12:10:17.397Z"
+}
