@@ -236,6 +236,9 @@ export function createTerminalMirrorRuntime(deps: TerminalMirrorRuntimeDeps): Te
       if (!client) {
         continue;
       }
+      client.adaptiveWidthCols = null;
+      client.adaptiveWidthRows = null;
+      client.adaptiveWidthHeartbeatAt = 0;
       client.pendingPasteImage = null;
       client.pendingAttachFile = null;
       deps.sendMessage(client, { type: 'error', payload: { message: reason, code } });
@@ -254,6 +257,12 @@ export function createTerminalMirrorRuntime(deps: TerminalMirrorRuntimeDeps): Te
     if (mirror.lifecycle === 'destroyed') {
       return;
     }
+
+    // A mirror may be destroyed by shutdown, target failure, or a direct
+    // lifecycle cleanup without passing through subscriber detach. Release
+    // tmux width ownership before dropping the in-memory lease baseline;
+    // otherwise resize-window leaves the shared tmux window in manual mode.
+    clearAdaptiveWidthLeaseAggregate(mirror, `destroy:${reason}`);
 
     // R3: drop any pending input items for the dying mirror before subscribers
     // are released or the mirror record is removed. Items already in flight
@@ -629,7 +638,15 @@ export function createTerminalMirrorRuntime(deps: TerminalMirrorRuntimeDeps): Te
       mirror.adaptiveWidthLeaseTimer = null;
     }
     if (mirror.adaptiveWidthAppliedCols !== null) {
-      releaseAdaptiveTmuxWidth(mirror, reason);
+      try {
+        releaseAdaptiveTmuxWidth(mirror, reason);
+      } catch (error) {
+        console.error(
+          `[${deps.logTimePrefix()}] adaptive width release failed while clearing mirror lease: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
     }
     mirror.adaptiveWidthAppliedCols = null;
     mirror.adaptiveWidthBaselineGeometry = null;

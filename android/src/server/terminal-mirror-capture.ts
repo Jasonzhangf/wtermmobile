@@ -576,9 +576,6 @@ export function createTerminalMirrorCaptureRuntime(
             canonicalLineCount: snapshot.canonicalLineCount ?? snapshot.bufferLines.length,
           }
         : null;
-      console.log(
-        `[${deps.logTimePrefix()}] [mirror:${mirror.sessionName}] tmux capture sync captured=${snapshot.capturedLineCount ?? snapshot.bufferLines.length} canonical=${snapshot.canonicalLineCount ?? snapshot.bufferLines.length} continuity=authoritative-replace matched=0 total=${snapshot.totalAvailableLines ?? snapshot.bufferStartIndex + snapshot.bufferLines.length} rows=${snapshot.rows} cols=${snapshot.cols} buffer=${mirror.bufferStartIndex}-${getMirrorAvailableEndIndex(mirror)} visible=${snapshot.visibleTopIndex ?? Math.max(snapshot.bufferStartIndex, snapshot.bufferStartIndex + snapshot.bufferLines.length - snapshot.rows)}-${getMirrorAvailableEndIndex(mirror)} stabilizeAttempts=${stableCapture.attempts} stabilizeMode=${stableCapture.stabilizedAgainst}`,
-      );
       return true;
     }
     const snapshot = await adapter.readSnapshot(mirror.sessionName);
