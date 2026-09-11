@@ -129,10 +129,20 @@ const MIRROR_LIVE_SYNC_IDLE_MS = 120;
 const QUIET_CAPTURE_MAX_DELAY_MS = 500;
 const ADAPTIVE_WIDTH_LEASE_TTL_MS = 65000;
 
+interface PendingAdaptiveWidthCleanup {
+  key: string;
+  sessionName: string;
+  backend: 'tmux' | 'herdr';
+  baseline: TerminalGeometry | null;
+  appliedCols: number | null;
+  appliedRows: number | null;
+}
+
 export function createTerminalMirrorRuntime(deps: TerminalMirrorRuntimeDeps): TerminalMirrorRuntime {
   const sessions = deps.sessions;
   const mirrors = deps.mirrors;
   const pendingPostFlushImmediateSyncMirrors = new WeakSet<SessionMirror>();
+  const pendingAdaptiveWidthCleanup = new Map<string, PendingAdaptiveWidthCleanup>();
 
   function isTmuxSessionUnavailableError(error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
@@ -185,8 +195,10 @@ export function createTerminalMirrorRuntime(deps: TerminalMirrorRuntimeDeps): Te
   }
 
   function createMirror(sessionName: string, backend: 'tmux' | 'herdr' = 'tmux'): SessionMirror {
+    const nextKey = deps.getMirrorKey(sessionName, backend);
+    attemptPendingAdaptiveWidthCleanup(nextKey);
     const mirror: SessionMirror = {
-      key: deps.getMirrorKey(sessionName, backend),
+      key: nextKey,
       sessionName,
       backend,
       scratchBridge: null,
@@ -264,9 +276,8 @@ export function createTerminalMirrorRuntime(deps: TerminalMirrorRuntimeDeps): Te
     // otherwise resize-window leaves the shared tmux window in manual mode.
     if (!clearAdaptiveWidthLeaseAggregate(mirror, `destroy:${reason}`)) {
       console.error(
-        `[${deps.logTimePrefix()}] mirror cleanup blocked: adaptive width release failed for ${mirror.sessionName}; keeping mirror as cleanup-failed`,
+        `[${deps.logTimePrefix()}] adaptive width release failed for ${mirror.sessionName}; mirror teardown continues and cleanup is retained for retry`,
       );
-      return false;
     }
 
     // R3: drop any pending input items for the dying mirror before subscribers
@@ -646,8 +657,7 @@ export function createTerminalMirrorRuntime(deps: TerminalMirrorRuntimeDeps): Te
       try {
         releaseAdaptiveTmuxWidth(mirror, reason);
       } catch (error) {
-        mirror.lifecycle = 'failed';
-        stopMirrorLiveSync(mirror);
+        recordAdaptiveWidthCleanupFailure(mirror);
         console.error(
           `[${deps.logTimePrefix()}] adaptive width release failed while clearing mirror lease: ${
             error instanceof Error ? error.message : String(error)
@@ -656,6 +666,7 @@ export function createTerminalMirrorRuntime(deps: TerminalMirrorRuntimeDeps): Te
         return false;
       }
     }
+    pendingAdaptiveWidthCleanup.delete(mirror.key);
     mirror.adaptiveWidthAppliedCols = null;
     mirror.adaptiveWidthBaselineGeometry = null;
     return true;
@@ -707,7 +718,50 @@ export function createTerminalMirrorRuntime(deps: TerminalMirrorRuntimeDeps): Te
     });
   }
 
-  function releaseAdaptiveTmuxWidth(mirror: SessionMirror, reason: string) {
+  function recordAdaptiveWidthCleanupFailure(mirror: SessionMirror) {
+    pendingAdaptiveWidthCleanup.set(mirror.key, {
+      key: mirror.key,
+      sessionName: mirror.sessionName,
+      backend: mirror.backend || 'tmux',
+      baseline: mirror.adaptiveWidthBaselineGeometry
+        ? { ...mirror.adaptiveWidthBaselineGeometry }
+        : null,
+      appliedCols: mirror.adaptiveWidthAppliedCols ?? null,
+      appliedRows: mirror.adaptiveWidthAppliedRows ?? null,
+    });
+  }
+
+  function attemptPendingAdaptiveWidthCleanup(key: string) {
+    const pending = pendingAdaptiveWidthCleanup.get(key);
+    if (!pending) {
+      return true;
+    }
+    if (pending.appliedCols === null) {
+      pendingAdaptiveWidthCleanup.delete(key);
+      return true;
+    }
+    try {
+      releaseAdaptiveTmuxWidth({
+        sessionName: pending.sessionName,
+        backend: pending.backend,
+        adaptiveWidthBaselineGeometry: pending.baseline,
+      }, `retry:${pending.key}`);
+      pendingAdaptiveWidthCleanup.delete(key);
+      return true;
+    } catch (error) {
+      console.error(
+        `[${deps.logTimePrefix()}] adaptive width cleanup retry failed for ${pending.sessionName}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return false;
+    }
+  }
+
+  function releaseAdaptiveTmuxWidth(
+    mirror: Pick<SessionMirror, 'sessionName' | 'backend' | 'adaptiveWidthBaselineGeometry'>,
+    reason: string,
+  ) {
     if (mirror.backend === 'tmux') {
       deps.runTmux(['set-window-option', '-u', '-t', deps.buildExactTmuxSessionTarget(mirror.sessionName), 'window-size']);
     }
